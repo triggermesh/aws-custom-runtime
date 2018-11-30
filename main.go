@@ -160,7 +160,7 @@ func main() {
 
 	go func() {
 		fmt.Println("Run bootstrap")
-		if err := exec.Command("sh", "-c", "./bootstrap").Run(); err != nil {
+		if err := exec.Command("sh", "-c", environment["LAMBDA_TASK_ROOT"]+"/bootstrap").Run(); err != nil {
 			log.Fatalln(err)
 		}
 	}()

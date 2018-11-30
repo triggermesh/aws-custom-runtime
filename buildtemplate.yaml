@@ -27,7 +27,7 @@ spec:
     description: The subdirectory of the workspace/repo
     default: ""
   - name: HANDLER
-    default: "handler.function"
+    default: "function.handler"
   steps:
   - name: dockerfile
     image: gcr.io/kaniko-project/executor@sha256:30ba460a034a8051b3222a32e20cb6049741e58384e3adf8c8987c004e2f2ab9
@@ -45,7 +45,7 @@ spec:
         ENV LAMBDA_TASK_ROOT "/opt"
         ENV _HANDLER "${HANDLER}"
         
-        COPY . .
+        COPY . /opt
 
         CMD ["/opt/aws-custom-runtime"]
       EOF
