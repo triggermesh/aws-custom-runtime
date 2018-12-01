@@ -35,6 +35,8 @@ var (
 	results = queue{}
 	lock    = sync.RWMutex{}
 
+	awsEndpoint = "/2018-06-01/runtime"
+
 	environment = map[string]string{
 		"_HANDLER":                        "",
 		"LAMBDA_TASK_ROOT":                "",
@@ -81,6 +83,17 @@ func (t queue) write(key, value string) {
 	t[key] = value
 }
 
+func (t queue) readAndRemove() (string, string) {
+	lock.Lock()
+	defer lock.Unlock()
+
+	for id, data := range t {
+		delete(t, id)
+		return id, data
+	}
+	return "", ""
+}
+
 func putTask(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -90,31 +103,28 @@ func putTask(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	id := strconv.Itoa(int(time.Now().UnixNano()))
-	fmt.Printf("<- %s %s\n", id, body)
 	tasks.write(id, string(body))
+	fmt.Printf("<- %s %s\n", id, body)
 
 	response, ok := results.read(id)
 	for !ok {
 		response, ok = results.read(id)
 	}
 	fmt.Printf("-> %s %s\n", id, response)
-	w.Write([]byte(response + "\n"))
 	w.WriteHeader(200)
+	w.Write([]byte(response + "\n"))
 	return
 }
 
 func getTask(w http.ResponseWriter, r *http.Request) {
-	for len(tasks) == 0 {
+	id, data := tasks.readAndRemove()
+	for len(id) == 0 {
 		time.Sleep(time.Millisecond * 100)
+		id, data = tasks.readAndRemove()
 	}
-
-	for id, data := range tasks {
-		delete(tasks, id)
-		w.Header().Set("Lambda-Runtime-Aws-Request-Id", id)
-		w.Write([]byte(data))
-		w.WriteHeader(200)
-		break
-	}
+	w.Header().Set("Lambda-Runtime-Aws-Request-Id", id)
+	w.WriteHeader(200)
+	w.Write([]byte(data))
 	return
 }
 
@@ -142,10 +152,10 @@ func taskError(w http.ResponseWriter, r *http.Request) {
 
 func api() {
 	router := mux.NewRouter()
-	router.HandleFunc("/2018-06-01/runtime/init/error", initError).Methods("POST")
-	router.HandleFunc("/2018-06-01/runtime/invocation/next", getTask).Methods("GET")
-	router.HandleFunc("/2018-06-01/runtime/invocation/{AwsRequestId}/response", taskResult).Methods("POST")
-	router.HandleFunc("/2018-06-01/runtime/invocation/{AwsRequestId}/error", taskError).Methods("POST")
+	router.HandleFunc(awsEndpoint+"/init/error", initError).Methods("POST")
+	router.HandleFunc(awsEndpoint+"/invocation/next", getTask).Methods("GET")
+	router.HandleFunc(awsEndpoint+"/invocation/{AwsRequestId}/response", taskResult).Methods("POST")
+	router.HandleFunc(awsEndpoint+"/invocation/{AwsRequestId}/error", taskError).Methods("POST")
 	log.Fatal(http.ListenAndServe(":80", router))
 }
 
