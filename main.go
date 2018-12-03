@@ -38,30 +38,23 @@ var (
 	awsEndpoint = "/2018-06-01/runtime"
 
 	environment = map[string]string{
-		"_HANDLER":                        "",
-		"LAMBDA_TASK_ROOT":                "",
-		"AWS_REGION":                      "",
-		"AWS_EXECUTION_ENV":               "",
-		"AWS_LAMBDA_FUNCTION_NAME":        "",
-		"AWS_LAMBDA_FUNCTION_MEMORY_SIZE": "",
-		"AWS_LAMBDA_FUNCTION_VERSION":     "",
-		"AWS_LAMBDA_LOG_GROUP_NAME":       "",
-		"AWS_LAMBDA_LOG_STREAM_NAME":      "",
-		"AWS_ACCESS_KEY_ID":               "",
-		"AWS_SECRET_ACCESS_KEY":           "",
-		"AWS_SESSION_TOKEN":               "",
-		"LANG":                            "",
-		"TZ":                              "",
-		"LAMBDA_RUNTIME_DIR":              "",
-		"PATH":                            "/usr/local/bin:/usr/bin/:/bin:/opt/bin",
-		"LD_LIBRARY_PATH":                 "/lib64:/usr/lib64:$LAMBDA_RUNTIME_DIR:$LAMBDA_RUNTIME_DIR/lib:$LAMBDA_TASK_ROOT:$LAMBDA_TASK_ROOT/lib:/opt/lib",
-		"AWS_LAMBDA_RUNTIME_API":          "localhost",
+		"PATH":                   "/usr/local/bin:/usr/bin/:/bin:/opt/bin",
+		"LD_LIBRARY_PATH":        "/lib64:/usr/lib64:$LAMBDA_RUNTIME_DIR:$LAMBDA_RUNTIME_DIR/lib:$LAMBDA_TASK_ROOT:$LAMBDA_TASK_ROOT/lib:/opt/lib",
+		"AWS_LAMBDA_RUNTIME_API": "127.0.0.1",
+
+		// Some dummy values required by Rust client
+		"AWS_LAMBDA_FUNCTION_NAME":        "foo",
+		"AWS_LAMBDA_FUNCTION_MEMORY_SIZE": "128",
+		"AWS_LAMBDA_FUNCTION_VERSION":     "0.0.1",
+		"AWS_LAMBDA_LOG_GROUP_NAME":       "foo-group",
+		"AWS_LAMBDA_LOG_STREAM_NAME":      "foo-stream",
 	}
 )
 
 func setupEnv() error {
 	environment["_HANDLER"], _ = os.LookupEnv("_HANDLER")
 	environment["LAMBDA_TASK_ROOT"], _ = os.LookupEnv("LAMBDA_TASK_ROOT")
+
 	for k, v := range environment {
 		if err := os.Setenv(k, v); err != nil {
 			return err
@@ -122,7 +115,13 @@ func getTask(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(time.Millisecond * 100)
 		id, data = tasks.readAndRemove()
 	}
+
+	// Dummy headers required by Rust client. Replace with something meaningful
 	w.Header().Set("Lambda-Runtime-Aws-Request-Id", id)
+	w.Header().Set("Lambda-Runtime-Deadline-Ms", "5543843233064023422")
+	w.Header().Set("Lambda-Runtime-Invoked-Function-Arn", "arn:aws:lambda:us-east-1:123456789012:function:custom-runtime")
+	w.Header().Set("Lambda-Runtime-Trace-Id", "0")
+
 	w.WriteHeader(200)
 	w.Write([]byte(data))
 	return
