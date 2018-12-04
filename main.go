@@ -63,23 +63,15 @@ func setupEnv() error {
 	return nil
 }
 
-func (t queue) read(key string) (string, bool) {
-	lock.RLock()
-	defer lock.RUnlock()
-	data, ok := t[key]
-	return data, ok
-}
-
 func (t queue) write(key, value string) {
 	lock.Lock()
 	defer lock.Unlock()
 	t[key] = value
 }
 
-func (t queue) readAndRemove() (string, string) {
-	lock.Lock()
-	defer lock.Unlock()
-
+func (t queue) read() (string, string) {
+	lock.RLock()
+	defer lock.RUnlock()
 	for id, data := range t {
 		delete(t, id)
 		return id, data
@@ -87,10 +79,17 @@ func (t queue) readAndRemove() (string, string) {
 	return "", ""
 }
 
-func putTask(w http.ResponseWriter, r *http.Request) {
+func (t queue) readByKey(key string) (string, bool) {
+	lock.RLock()
+	defer lock.RUnlock()
+	data, ok := t[key]
+	return data, ok
+}
+
+func newTask(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer r.Body.Close()
@@ -99,21 +98,21 @@ func putTask(w http.ResponseWriter, r *http.Request) {
 	tasks.write(id, string(body))
 	fmt.Printf("<- %s %s\n", id, body)
 
-	response, ok := results.read(id)
+	response, ok := results.readByKey(id)
 	for !ok {
-		response, ok = results.read(id)
+		response, ok = results.readByKey(id)
 	}
 	fmt.Printf("-> %s %s\n", id, response)
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(response + "\n"))
 	return
 }
 
 func getTask(w http.ResponseWriter, r *http.Request) {
-	id, data := tasks.readAndRemove()
+	id, data := tasks.read()
 	for len(id) == 0 {
 		time.Sleep(time.Millisecond * 100)
-		id, data = tasks.readAndRemove()
+		id, data = tasks.read()
 	}
 
 	// Dummy headers required by Rust client. Replace with something meaningful
@@ -122,30 +121,46 @@ func getTask(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Lambda-Runtime-Invoked-Function-Arn", "arn:aws:lambda:us-east-1:123456789012:function:custom-runtime")
 	w.Header().Set("Lambda-Runtime-Trace-Id", "0")
 
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(data))
 	return
 }
 
 func initError(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Init error")
-	return
-}
-
-func taskResult(w http.ResponseWriter, r *http.Request) {
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		log.Fatalln(err)
 	}
 	defer r.Body.Close()
 
-	vars := mux.Vars(r)
-	results.write(vars["AwsRequestId"], string(data))
+	log.Fatalf("Runtime initialization error: %s\n", data)
+	return
+}
+
+func postResult(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["AwsRequestId"]
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		fmt.Printf("! %s %s\n", id, err)
+		return
+	}
+	defer r.Body.Close()
+
+	results.write(id, string(data))
+	w.WriteHeader(http.StatusOK)
 	return
 }
 
 func taskError(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Response error")
+	id := mux.Vars(r)["AwsRequestId"]
+	data, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		fmt.Printf("! %s %s\n", id, err)
+		return
+	}
+	fmt.Printf("! %s %s\n", id, data)
+	results.write(id, string(data))
+	w.WriteHeader(http.StatusOK)
 	return
 }
 
@@ -153,7 +168,7 @@ func api() {
 	router := mux.NewRouter()
 	router.HandleFunc(awsEndpoint+"/init/error", initError).Methods("POST")
 	router.HandleFunc(awsEndpoint+"/invocation/next", getTask).Methods("GET")
-	router.HandleFunc(awsEndpoint+"/invocation/{AwsRequestId}/response", taskResult).Methods("POST")
+	router.HandleFunc(awsEndpoint+"/invocation/{AwsRequestId}/response", postResult).Methods("POST")
 	router.HandleFunc(awsEndpoint+"/invocation/{AwsRequestId}/error", taskError).Methods("POST")
 	log.Fatal(http.ListenAndServe(":80", router))
 }
@@ -175,6 +190,6 @@ func main() {
 	}()
 
 	fmt.Println("Starting listener")
-	http.HandleFunc("/", putTask)
+	http.HandleFunc("/", newTask)
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
