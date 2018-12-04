@@ -39,7 +39,7 @@ docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/sr
 mv target/release/examples/basic target/release/examples/bootstrap
 ```
 
-3. Deploy buildtemplate function using [`tm`](https://github.com/triggermesh/tm) CLI.
+3. Deploy buildtemplate function using [`tm`](https://github.com/triggermesh/tm) CLI:
 ```
 tm deploy buildtemplate -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/buildtemplate.yaml
 tm deploy service lambda-rust -f target/release/examples/ --build-template aws-custom-runtime
@@ -51,6 +51,77 @@ Use your RUST AWS Lambda function on knative:
 curl lambda-rust.default.k.triggermesh.io --data '{"firstName": "Foo"}'
 {"message":"Hello, Foo!"}
 ```
+
+### AWS Lambda C++ example
+
+1. Build custom runtime:
+```
+cd /tmp
+git clone https://github.com/awslabs/aws-lambda-cpp.git
+cd aws-lambda-cpp
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/tmp/out
+make && make install
+```
+
+2. Prepare example function:
+```
+mkdir /tmp/hello-cpp-world
+cd /tmp/hello-cpp-world
+
+
+cat > main.cpp <<EOF
+// main.cpp
+#include <aws/lambda-runtime/runtime.h>
+
+using namespace aws::lambda_runtime;
+
+invocation_response my_handler(invocation_request const& request)
+{
+   return invocation_response::success("Hello, World!", "application/json");
+}
+
+int main()
+{
+   run_handler(my_handler);
+   return 0;
+}
+EOF
+
+
+cat > CMakeLists.txt <<EOF
+cmake_minimum_required(VERSION 3.5)
+set(CMAKE_CXX_STANDARD 11)
+project(bootstrap LANGUAGES CXX)
+
+find_package(aws-lambda-runtime REQUIRED)
+add_executable(\${PROJECT_NAME} "main.cpp")
+target_link_libraries(\${PROJECT_NAME} PUBLIC AWS::aws-lambda-runtime)
+aws_lambda_package_target(\${PROJECT_NAME})
+EOF
+```
+
+3. Build function:
+```
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/tmp/out
+make
+```
+
+4. Deploy with [`tm`](https://github.com/triggermesh/tm) CLI:
+```
+tm deploy buildtemplate -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/buildtemplate.yaml
+tm deploy service lambda-cpp -f . --build-template aws-custom-runtime
+```
+
+C++ Lambda function is running on knative platform:
+```
+curl lambda-cpp.default.k.triggermesh.io --data '{"payload": "foobar"}'
+Hello, World!
+```
+
 
 ### Support
 
