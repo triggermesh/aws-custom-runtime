@@ -22,21 +22,25 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
 )
 
-type queue map[string]string
+const (
+	requestSizeLimit = 67108864
+)
+
+type message struct {
+	id   string
+	data []byte
+}
 
 var (
-	tasks   = queue{}
-	results = queue{}
-	lock    = sync.RWMutex{}
+	tasks   chan message
+	results chan message
 
 	awsEndpoint = "/2018-06-01/runtime"
-
 	environment = map[string]string{
 		"PATH":                   "/usr/local/bin:/usr/bin/:/bin:/opt/bin",
 		"LD_LIBRARY_PATH":        "/lib64:/usr/lib64:$LAMBDA_RUNTIME_DIR:$LAMBDA_RUNTIME_DIR/lib:$LAMBDA_TASK_ROOT:$LAMBDA_TASK_ROOT/lib:/opt/lib",
@@ -63,31 +67,8 @@ func setupEnv() error {
 	return nil
 }
 
-func (t queue) write(key, value string) {
-	lock.Lock()
-	defer lock.Unlock()
-	t[key] = value
-}
-
-func (t queue) read() (string, string) {
-	lock.RLock()
-	defer lock.RUnlock()
-	for id, data := range t {
-		delete(t, id)
-		return id, data
-	}
-	return "", ""
-}
-
-func (t queue) readByKey(key string) (string, bool) {
-	lock.RLock()
-	defer lock.RUnlock()
-	data, ok := t[key]
-	return data, ok
-}
-
 func newTask(w http.ResponseWriter, r *http.Request) {
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, requestSizeLimit))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -95,34 +76,30 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	id := strconv.Itoa(int(time.Now().UnixNano()))
-	tasks.write(id, string(body))
 	fmt.Printf("<- %s %s\n", id, body)
-
-	response, ok := results.readByKey(id)
-	for !ok {
-		response, ok = results.readByKey(id)
+	tasks <- message{
+		id:   id,
+		data: body,
 	}
-	fmt.Printf("-> %s %s\n", id, response)
+
+	response := <-results
+	fmt.Printf("-> %s %s\n", response.id, response.data)
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(response + "\n"))
+	w.Write(response.data)
 	return
 }
 
 func getTask(w http.ResponseWriter, r *http.Request) {
-	id, data := tasks.read()
-	for len(id) == 0 {
-		time.Sleep(time.Millisecond * 100)
-		id, data = tasks.read()
-	}
+	task := <-tasks
 
 	// Dummy headers required by Rust client. Replace with something meaningful
-	w.Header().Set("Lambda-Runtime-Aws-Request-Id", id)
+	w.Header().Set("Lambda-Runtime-Aws-Request-Id", task.id)
 	w.Header().Set("Lambda-Runtime-Deadline-Ms", "5543843233064023422")
 	w.Header().Set("Lambda-Runtime-Invoked-Function-Arn", "arn:aws:lambda:us-east-1:123456789012:function:custom-runtime")
 	w.Header().Set("Lambda-Runtime-Trace-Id", "0")
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(data))
+	w.Write(task.data)
 	return
 }
 
@@ -141,12 +118,15 @@ func postResult(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["AwsRequestId"]
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		fmt.Printf("! %s %s\n", id, err)
+		fmt.Printf("! %s\n", err)
 		return
 	}
 	defer r.Body.Close()
 
-	results.write(id, string(data))
+	results <- message{
+		id:   id,
+		data: data,
+	}
 	w.WriteHeader(http.StatusOK)
 	return
 }
@@ -155,11 +135,15 @@ func taskError(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["AwsRequestId"]
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		fmt.Printf("! %s %s\n", id, err)
+		fmt.Printf("! %s\n", err)
 		return
 	}
+
 	fmt.Printf("! %s %s\n", id, data)
-	results.write(id, string(data))
+	results <- message{
+		id:   id,
+		data: data,
+	}
 	w.WriteHeader(http.StatusOK)
 	return
 }
@@ -173,17 +157,31 @@ func api() {
 	log.Fatal(http.ListenAndServe(":80", router))
 }
 
+type maxBytesHandler struct {
+	h http.Handler
+	n int64
+}
+
+func (h *maxBytesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, h.n)
+	h.h.ServeHTTP(w, r)
+}
 func main() {
+	tasks = make(chan message)
+	results = make(chan message)
+	defer close(tasks)
+	defer close(results)
+
+	fmt.Println("Setup env")
 	if err := setupEnv(); err != nil {
-		fmt.Println("Setup env")
 		log.Fatalln(err)
 	}
 
 	fmt.Println("Run API")
 	go api()
 
+	fmt.Println("Run bootstrap")
 	go func() {
-		fmt.Println("Run bootstrap")
 		if err := exec.Command("sh", "-c", environment["LAMBDA_TASK_ROOT"]+"/bootstrap").Run(); err != nil {
 			log.Fatalln(err)
 		}
