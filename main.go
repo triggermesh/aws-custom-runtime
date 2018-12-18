@@ -127,7 +127,7 @@ func postResult(w http.ResponseWriter, r *http.Request) {
 		id:   id,
 		data: data,
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusAccepted)
 	return
 }
 
@@ -144,7 +144,7 @@ func taskError(w http.ResponseWriter, r *http.Request) {
 		id:   id,
 		data: data,
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusAccepted)
 	return
 }
 
