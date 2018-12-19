@@ -1,0 +1,58 @@
+version: 2
+jobs:
+  build:
+    working_directory: /go/src/github.com/triggermesh/aws-custom-runtime
+    docker:
+      - image: circleci/golang
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-pkg-cache
+      - run:
+          name: Build binaries
+          command: |
+            CGO_ENABLED=0 go build
+      - persist_to_workspace:
+          root: /go/src/github.com/triggermesh/aws-custom-runtime
+          paths:
+            - aws-custom-runtime
+      - save_cache:
+          key: v1-pkg-cache
+          paths:
+            - "/go/pkg"
+
+  release:
+    docker:
+      - image: circleci/golang
+    steps:
+      - checkout
+      - attach_workspace:
+          at: /tmp/artifacts
+      - run:
+          name: "Publish Release on GitHub"
+          command: |
+            go get github.com/tcnksm/ghr
+            # Temporary hardcoded single version
+            VERSION=0.0.1
+            # VERSION=$(git describe --tags `git rev-list --tags --max-count=1`)
+            ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -delete ${VERSION} /tmp/artifacts
+workflows:
+  version: 2
+  main:
+    jobs:
+      - build:
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
+      - release:
+          requires:
+            - build
+          filters:
+            # Publish master as release for now
+            branches:
+            #   ignore: /.*/
+                only:
+                  - master
+            tags:
+              only: /^v\d+\.\d+\.\d+$/
