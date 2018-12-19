@@ -8,7 +8,7 @@ The AWS Lambdas execution [environment](https://docs.aws.amazon.com/lambda/lates
 
 ### AWS custom runtime walkthrough
 
-This repository contains an `example` lambda function written in bash with a AWS custom runtime described in [tutorial](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-walkthrough.html). To run this function:
+This repository contains an `example` lambda function written in bash with a AWS custom runtime described in this AWS [tutorial](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-walkthrough.html). To run this function use our [`tm`](https://github.com/triggermesh/tm) client to talk to the knative API.
 
 1. Install AWS custom runtime buildtemplate:
 ```
