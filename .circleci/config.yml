@@ -33,9 +33,7 @@ jobs:
           name: "Publish Release on GitHub"
           command: |
             go get github.com/tcnksm/ghr
-            # Temporary hardcoded single version
-            VERSION=0.0.1
-            # VERSION=$(git describe --tags `git rev-list --tags --max-count=1`)
+            VERSION=$(git describe --tags `git rev-list --tags --max-count=1`)
             ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -delete ${VERSION} /tmp/artifacts
 workflows:
   version: 2
