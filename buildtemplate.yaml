@@ -41,8 +41,8 @@ spec:
         FROM amazonlinux
         
         RUN LATEST_VERSION=\$(curl -sI https://github.com/triggermesh/aws-custom-runtime/releases/latest | grep "Location:" | awk -F "/" '{print \$NF}' | tr -d "\r" ) \
-	        && curl -sL https://github.com/triggermesh/aws-custom-runtime/releases/download/\${LATEST_VERSION}/aws-custom-runtime > /opt/aws-custom-runtime \
-                && chmod +x /opt/aws-custom-runtime
+              && curl -sL https://github.com/triggermesh/aws-custom-runtime/releases/download/\${LATEST_VERSION}/aws-custom-runtime > /opt/aws-custom-runtime \
+              && chmod +x /opt/aws-custom-runtime
         
         ENV LAMBDA_TASK_ROOT "/opt"
         ENV _HANDLER "${HANDLER}"
