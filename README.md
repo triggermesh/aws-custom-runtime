@@ -37,7 +37,7 @@ cd aws-lambda-rust-runtime
 
 2. Build binary and rename it to `bootstrap`:
 ```
-docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:1.30.0 cargo build -p lambda_runtime --example basic --release
+docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/src/myapp rust:1.31.0 cargo build -p lambda_runtime --example basic --release
 mv target/release/examples/basic target/release/examples/bootstrap
 ```
 
