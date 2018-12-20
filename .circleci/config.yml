@@ -47,10 +47,7 @@ workflows:
           requires:
             - build
           filters:
-            # Publish master as release for now
             branches:
-            #   ignore: /.*/
-                only:
-                  - master
+              ignore: /.*/
             tags:
               only: /^v\d+\.\d+\.\d+$/
