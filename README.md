@@ -1,3 +1,5 @@
+[![CircleCI](https://circleci.com/gh/triggermesh/aws-custom-runtime.svg?style=svg)](https://circleci.com/gh/triggermesh/aws-custom-runtime)
+
 ## Running AWS Lambda Custom Runtime in Knative
 
 In November 2018, AWS announced support for [Lambda custom runtime](https://aws.amazon.com/about-aws/whats-new/2018/11/aws-lambda-now-supports-custom-runtimes-and-layers/) using a straightforward [AWS lambda runtime API](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-api.html).

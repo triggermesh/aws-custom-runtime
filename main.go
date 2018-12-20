@@ -29,16 +29,18 @@ import (
 
 const (
 	requestSizeLimit = 67108864
+	functionTTL      = 5e+9 // Funtions deadline, 5 seconds
 )
 
 type message struct {
-	id   string
-	data []byte
+	id       string
+	deadline int64
+	data     []byte
 }
 
 var (
 	tasks   chan message
-	results chan message
+	results map[string]chan message
 
 	awsEndpoint = "/2018-06-01/runtime"
 	environment = map[string]string{
@@ -46,7 +48,7 @@ var (
 		"LD_LIBRARY_PATH":        "/lib64:/usr/lib64:$LAMBDA_RUNTIME_DIR:$LAMBDA_RUNTIME_DIR/lib:$LAMBDA_TASK_ROOT:$LAMBDA_TASK_ROOT/lib:/opt/lib",
 		"AWS_LAMBDA_RUNTIME_API": "127.0.0.1",
 
-		// Some dummy values required by Rust client
+		// Some dummy values
 		"AWS_LAMBDA_FUNCTION_NAME":        "foo",
 		"AWS_LAMBDA_FUNCTION_MEMORY_SIZE": "128",
 		"AWS_LAMBDA_FUNCTION_VERSION":     "0.0.1",
@@ -75,17 +77,31 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	id := strconv.Itoa(int(time.Now().UnixNano()))
-	fmt.Printf("<- %s %s\n", id, body)
-	tasks <- message{
-		id:   id,
-		data: body,
+	now := time.Now().UnixNano()
+	task := message{
+		id:       fmt.Sprintf("%d", now),
+		deadline: now + functionTTL,
+		data:     body,
+	}
+	fmt.Printf("<- %s %s\n", task.id, task.data)
+
+	results[task.id] = make(chan message)
+	defer close(results[task.id])
+
+	tasks <- task
+
+	select {
+	case <-time.After(time.Duration(functionTTL)):
+		fmt.Printf("-> ! %s Deadline is reached\n", task.id)
+		w.WriteHeader(http.StatusRequestTimeout)
+		w.Write([]byte("Function deadline is reached"))
+	case result := <-results[task.id]:
+		fmt.Printf("Response in queue %s\n", result.id)
+		fmt.Printf("-> %s %s\n", result.id, result.data)
+		w.WriteHeader(http.StatusOK)
+		w.Write(result.data)
 	}
 
-	response := <-results
-	fmt.Printf("-> %s %s\n", response.id, response.data)
-	w.WriteHeader(http.StatusOK)
-	w.Write(response.data)
 	return
 }
 
@@ -94,7 +110,7 @@ func getTask(w http.ResponseWriter, r *http.Request) {
 
 	// Dummy headers required by Rust client. Replace with something meaningful
 	w.Header().Set("Lambda-Runtime-Aws-Request-Id", task.id)
-	w.Header().Set("Lambda-Runtime-Deadline-Ms", "5543843233064023422")
+	w.Header().Set("Lambda-Runtime-Deadline-Ms", strconv.Itoa(int(task.deadline)))
 	w.Header().Set("Lambda-Runtime-Invoked-Function-Arn", "arn:aws:lambda:us-east-1:123456789012:function:custom-runtime")
 	w.Header().Set("Lambda-Runtime-Trace-Id", "0")
 
@@ -123,7 +139,7 @@ func postResult(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	results <- message{
+	results[id] <- message{
 		id:   id,
 		data: data,
 	}
@@ -139,8 +155,7 @@ func taskError(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("! %s %s\n", id, data)
-	results <- message{
+	results[id] <- message{
 		id:   id,
 		data: data,
 	}
@@ -166,11 +181,11 @@ func (h *maxBytesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, h.n)
 	h.h.ServeHTTP(w, r)
 }
+
 func main() {
-	tasks = make(chan message)
-	results = make(chan message)
+	tasks = make(chan message, 100)
+	results = make(map[string]chan message)
 	defer close(tasks)
-	defer close(results)
 
 	fmt.Println("Setup env")
 	if err := setupEnv(); err != nil {
