@@ -96,12 +96,11 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusRequestTimeout)
 		w.Write([]byte("Function deadline is reached"))
 	case result := <-results[task.id]:
-		fmt.Printf("Response in queue %s\n", result.id)
 		fmt.Printf("-> %s %s\n", result.id, result.data)
 		w.WriteHeader(http.StatusOK)
 		w.Write(result.data)
 	}
-
+	delete(results, task.id)
 	return
 }
 
@@ -139,6 +138,13 @@ func postResult(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	if _, ok := results[id]; !ok {
+		w.WriteHeader(http.StatusGatewayTimeout)
+		w.Write([]byte("Function deadline is reached"))
+		return
+	}
+
+	fmt.Println("Channel is open")
 	results[id] <- message{
 		id:   id,
 		data: data,
