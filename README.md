@@ -1,4 +1,4 @@
-[![CircleCI](https://circleci.com/gh/triggermesh/aws-custom-runtime.svg?style=svg)](https://circleci.com/gh/triggermesh/aws-custom-runtime)
+[![CircleCI](https://circleci.com/gh/triggermesh/aws-custom-runtime.svg?style=shield)](https://circleci.com/gh/triggermesh/aws-custom-runtime)
 
 ## Running AWS Lambda Custom Runtime in Knative
 
