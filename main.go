@@ -92,15 +92,15 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 	mutex.Lock()
 	results[task.id] = resultsChannel
 	mutex.Unlock()
-	defer close(results[task.id])
+	defer close(resultsChannel)
 
 	tasks <- task
 
 	select {
 	case <-time.After(time.Duration(functionTTL)):
 		fmt.Printf("-> ! %s Deadline is reached\n", task.id)
-		w.WriteHeader(http.StatusRequestTimeout)
-		w.Write([]byte("Function deadline is reached"))
+		w.WriteHeader(http.StatusGone)
+		w.Write([]byte(fmt.Sprintf("Deadline is reached, data %s", task.data)))
 	case result := <-resultsChannel:
 		fmt.Printf("-> %s %s\n", result.id, result.data)
 		w.WriteHeader(http.StatusOK)
@@ -161,20 +161,23 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	var resultsChannel chan message
-	var ok bool
+	mutex.RLock()
+	resultsChannel, ok := results[id]
+	mutex.RUnlock()
+	if !ok {
+		w.WriteHeader(http.StatusGone)
+		w.Write([]byte("Function deadline is reached"))
+		return
+	}
+
 	switch kind {
+	case "response":
 	case "error":
 		fmt.Printf("! Error: %s\n", data)
-	case "response":
-		mutex.RLock()
-		resultsChannel, ok = results[id]
-		mutex.RUnlock()
-		if !ok {
-			w.WriteHeader(http.StatusGone)
-			w.Write([]byte("Function deadline is reached"))
-			return
-		}
+	default:
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(fmt.Sprintf("Unknown endpoint: %s", kind)))
+		return
 	}
 	resultsChannel <- message{
 		id:   id,
