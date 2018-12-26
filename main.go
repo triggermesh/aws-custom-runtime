@@ -22,14 +22,15 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
-
-	"github.com/gorilla/mux"
 )
 
 const (
-	requestSizeLimit = 67108864
-	functionTTL      = 5e+9 // Funtions deadline, 5 seconds
+	numberOfinvokers = 8    // Number of bootstrap processes
+	requestSizeLimit = 1e+7 // Request bosy size limit, 10Mb
+	functionTTL      = 3e+9 // Funtions deadline, 3 seconds
 )
 
 type message struct {
@@ -41,6 +42,8 @@ type message struct {
 var (
 	tasks   chan message
 	results map[string]chan message
+
+	mutex sync.RWMutex
 
 	awsEndpoint = "/2018-06-01/runtime"
 	environment = map[string]string{
@@ -85,7 +88,10 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Printf("<- %s %s\n", task.id, task.data)
 
-	results[task.id] = make(chan message)
+	resultsChannel := make(chan message)
+	mutex.Lock()
+	results[task.id] = resultsChannel
+	mutex.Unlock()
 	defer close(results[task.id])
 
 	tasks <- task
@@ -95,12 +101,14 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("-> ! %s Deadline is reached\n", task.id)
 		w.WriteHeader(http.StatusRequestTimeout)
 		w.Write([]byte("Function deadline is reached"))
-	case result := <-results[task.id]:
+	case result := <-resultsChannel:
 		fmt.Printf("-> %s %s\n", result.id, result.data)
 		w.WriteHeader(http.StatusOK)
 		w.Write(result.data)
 	}
+	mutex.Lock()
 	delete(results, task.id)
+	mutex.Unlock()
 	return
 }
 
@@ -129,8 +137,23 @@ func initError(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func postResult(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["AwsRequestId"]
+func parsePath(query string) (string, string, error) {
+	path := strings.TrimPrefix(query, awsEndpoint+"/invocation/")
+	request := strings.Split(path, "/")
+	if len(request) != 2 {
+		return "", "", fmt.Errorf("Incorrect URL query size")
+	}
+	return request[0], request[1], nil
+}
+
+func responseHandler(w http.ResponseWriter, r *http.Request) {
+	id, kind, err := parsePath(r.URL.Path)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
+		return
+	}
+
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		fmt.Printf("! %s\n", err)
@@ -138,14 +161,22 @@ func postResult(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	if _, ok := results[id]; !ok {
-		w.WriteHeader(http.StatusGatewayTimeout)
-		w.Write([]byte("Function deadline is reached"))
-		return
+	var resultsChannel chan message
+	var ok bool
+	switch kind {
+	case "error":
+		fmt.Printf("! Error: %s\n", data)
+	case "response":
+		mutex.RLock()
+		resultsChannel, ok = results[id]
+		mutex.RUnlock()
+		if !ok {
+			w.WriteHeader(http.StatusGone)
+			w.Write([]byte("Function deadline is reached"))
+			return
+		}
 	}
-
-	fmt.Println("Channel is open")
-	results[id] <- message{
+	resultsChannel <- message{
 		id:   id,
 		data: data,
 	}
@@ -153,39 +184,12 @@ func postResult(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func taskError(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["AwsRequestId"]
-	data, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		fmt.Printf("! %s\n", err)
-		return
-	}
-
-	results[id] <- message{
-		id:   id,
-		data: data,
-	}
-	w.WriteHeader(http.StatusAccepted)
-	return
-}
-
-func api() {
-	router := mux.NewRouter()
-	router.HandleFunc(awsEndpoint+"/init/error", initError).Methods("POST")
-	router.HandleFunc(awsEndpoint+"/invocation/next", getTask).Methods("GET")
-	router.HandleFunc(awsEndpoint+"/invocation/{AwsRequestId}/response", postResult).Methods("POST")
-	router.HandleFunc(awsEndpoint+"/invocation/{AwsRequestId}/error", taskError).Methods("POST")
-	log.Fatal(http.ListenAndServe(":80", router))
-}
-
-type maxBytesHandler struct {
-	h http.Handler
-	n int64
-}
-
-func (h *maxBytesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, h.n)
-	h.h.ServeHTTP(w, r)
+func api() error {
+	apiRouter := http.NewServeMux()
+	apiRouter.HandleFunc(awsEndpoint+"/init/error", initError)
+	apiRouter.HandleFunc(awsEndpoint+"/invocation/next", getTask)
+	apiRouter.HandleFunc(awsEndpoint+"/invocation/", responseHandler)
+	return http.ListenAndServe(":80", apiRouter)
 }
 
 func main() {
@@ -198,17 +202,22 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	fmt.Println("Run API")
-	go api()
-
-	fmt.Println("Run bootstrap")
+	fmt.Println("Starting API")
 	go func() {
-		if err := exec.Command("sh", "-c", environment["LAMBDA_TASK_ROOT"]+"/bootstrap").Run(); err != nil {
-			log.Fatalln(err)
-		}
+		log.Fatalln(api())
 	}()
 
-	fmt.Println("Starting listener")
-	http.HandleFunc("/", newTask)
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	fmt.Println("Starting invokers")
+	for i := 0; i < numberOfinvokers; i++ {
+		go func() {
+			if err := exec.Command("sh", "-c", environment["LAMBDA_TASK_ROOT"]+"/bootstrap").Run(); err != nil {
+				log.Fatalln(err)
+			}
+		}()
+	}
+
+	taskRouter := http.NewServeMux()
+	taskRouter.HandleFunc("/", newTask)
+	fmt.Println("Listening...")
+	log.Fatalln(http.ListenAndServe(":8080", taskRouter))
 }
