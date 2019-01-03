@@ -1,4 +1,4 @@
-[![CircleCI](https://circleci.com/gh/triggermesh/knative-lambda-runtime.svg?style=shield)](https://circleci.com/gh/triggermesh/knative-lambda-runtime)
+[![CircleCI](https://circleci.com/gh/triggermesh/aws-custom-runtime.svg?style=shield)](https://circleci.com/gh/triggermesh/aws-custom-runtime)
 
 ## Running AWS Lambda Custom Runtime in Knative
 
@@ -14,12 +14,12 @@ This repository contains an `example` lambda function written in bash with a AWS
 
 1. Install AWS custom runtime buildtemplate:
 ```
-tm deploy buildtemplate -f https://raw.githubusercontent.com/triggermesh/knative-lambda-runtime/master/buildtemplate.yaml
+tm deploy buildtemplate -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/buildtemplate.yaml
 ```
 
 2. Deploy function:
 ```
-tm deploy service lambda-bash -f https://github.com/triggermesh/knative-lambda-runtime --build-template knative-lambda-runtime --build-argument DIRECTORY=example --wait
+tm deploy service lambda-bash -f https://github.com/triggermesh/aws-custom-runtime --build-template aws-custom-runtime --build-argument DIRECTORY=example --wait
 ```
 
 In output you'll see URL that you can use to access `example/function.sh` function
@@ -43,8 +43,8 @@ mv target/release/examples/basic target/release/examples/bootstrap
 
 3. Deploy buildtemplate function using [`tm`](https://github.com/triggermesh/tm) CLI:
 ```
-tm deploy buildtemplate -f https://raw.githubusercontent.com/triggermesh/knative-lambda-runtime/master/buildtemplate.yaml
-tm deploy service lambda-rust -f target/release/examples/ --build-template knative-lambda-runtime
+tm deploy buildtemplate -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/buildtemplate.yaml
+tm deploy service lambda-rust -f target/release/examples/ --build-template aws-custom-runtime
 ```
 
 Use your RUST AWS Lambda function on knative:
@@ -114,8 +114,8 @@ make
 
 4. Deploy with [`tm`](https://github.com/triggermesh/tm) CLI:
 ```
-tm deploy buildtemplate -f https://raw.githubusercontent.com/triggermesh/knative-lambda-runtime/master/buildtemplate.yaml
-tm deploy service lambda-cpp -f . --build-template knative-lambda-runtime
+tm deploy buildtemplate -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/buildtemplate.yaml
+tm deploy service lambda-cpp -f . --build-template aws-custom-runtime
 ```
 
 C++ Lambda function is running on knative platform:
@@ -127,7 +127,7 @@ Hello, World!
 
 ### Support
 
-We would love your feedback on this tool so don't hesitate to let us know what is wrong and how we could improve it, just file an [issue](https://github.com/triggermesh/knative-lambda-runtime/issues/new)
+We would love your feedback on this tool so don't hesitate to let us know what is wrong and how we could improve it, just file an [issue](https://github.com/triggermesh/aws-custom-runtime/issues/new)
 
 ### Code of Conduct
 

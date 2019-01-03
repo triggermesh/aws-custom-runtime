@@ -15,7 +15,7 @@
 apiVersion: build.knative.dev/v1alpha1
 kind: BuildTemplate
 metadata:
-  name: knative-lambda-runtime
+  name: aws-custom-runtime
 spec:
   parameters:
   - name: IMAGE
@@ -40,16 +40,16 @@ spec:
       cat <<EOF > Dockerfile
         FROM amazonlinux
         
-        RUN LATEST_VERSION=\$(curl -sI https://github.com/triggermesh/knative-lambda-runtime/releases/latest | grep "Location:" | awk -F "/" '{print \$NF}' | tr -d "\r" ) \
-              && curl -sL https://github.com/triggermesh/knative-lambda-runtime/releases/download/\${LATEST_VERSION}/knative-lambda-runtime > /opt/knative-lambda-runtime \
-              && chmod +x /opt/knative-lambda-runtime
+        RUN LATEST_VERSION=\$(curl -sI https://github.com/triggermesh/aws-custom-runtime/releases/latest | grep "Location:" | awk -F "/" '{print \$NF}' | tr -d "\r" ) \
+              && curl -sL https://github.com/triggermesh/aws-custom-runtime/releases/download/\${LATEST_VERSION}/aws-custom-runtime > /opt/aws-custom-runtime \
+              && chmod +x /opt/aws-custom-runtime
         
         ENV LAMBDA_TASK_ROOT "/opt"
         ENV _HANDLER "${HANDLER}"
         
         COPY . /opt
 
-        CMD ["/opt/knative-lambda-runtime"]
+        CMD ["/opt/aws-custom-runtime"]
       EOF
   - name: export
     image: gcr.io/kaniko-project/executor@sha256:30ba460a034a8051b3222a32e20cb6049741e58384e3adf8c8987c004e2f2ab9

@@ -1,7 +1,7 @@
 version: 2
 jobs:
   build:
-    working_directory: /go/src/github.com/triggermesh/knative-lambda-runtime
+    working_directory: /go/src/github.com/triggermesh/aws-custom-runtime
     docker:
       - image: circleci/golang
     steps:
@@ -14,9 +14,9 @@ jobs:
           command: |
             CGO_ENABLED=0 go build
       - persist_to_workspace:
-          root: /go/src/github.com/triggermesh/knative-lambda-runtime
+          root: /go/src/github.com/triggermesh/aws-custom-runtime
           paths:
-            - knative-lambda-runtime
+            - aws-custom-runtime
       - save_cache:
           key: v1-pkg-cache
           paths:
@@ -33,7 +33,7 @@ jobs:
           name: "Publish Release on GitHub"
           command: |
             go get github.com/tcnksm/ghr
-            VERSION=$(curl -sI https://github.com/triggermesh/knative-lambda-runtime/releases/latest | grep "Location:" | awk -F "/" '{print $NF}' | tr -d "\r")
+            VERSION=$(curl -sI https://github.com/triggermesh/aws-custom-runtime/releases/latest | grep "Location:" | awk -F "/" '{print $NF}' | tr -d "\r")
             ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -delete ${VERSION} /tmp/artifacts
 workflows:
   version: 2
