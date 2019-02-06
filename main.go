@@ -15,6 +15,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -34,9 +35,12 @@ const (
 )
 
 type message struct {
-	id       string
-	deadline int64
-	data     []byte
+	ID              string
+	Deadline        int64
+	StatusCode      int
+	Headers         map[string]interface{}
+	IsBase64Encoded bool
+	Body            string
 }
 
 var (
@@ -82,15 +86,15 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UnixNano()
 	task := message{
-		id:       fmt.Sprintf("%d", now),
-		deadline: now + functionTTL,
-		data:     body,
+		ID:       fmt.Sprintf("%d", now),
+		Deadline: now + functionTTL,
+		Body:     string(body),
 	}
-	fmt.Printf("<- %s %s\n", task.id, task.data)
+	fmt.Printf("<- %s %s\n", task.ID, task.Body)
 
 	resultsChannel := make(chan message)
 	mutex.Lock()
-	results[task.id] = resultsChannel
+	results[task.ID] = resultsChannel
 	mutex.Unlock()
 	defer close(resultsChannel)
 
@@ -98,16 +102,21 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case <-time.After(time.Duration(functionTTL)):
-		fmt.Printf("-> ! %s Deadline is reached\n", task.id)
+		fmt.Printf("-> ! %s Deadline is reached\n", task.ID)
 		w.WriteHeader(http.StatusGone)
-		w.Write([]byte(fmt.Sprintf("Deadline is reached, data %s", task.data)))
+		w.Write([]byte(fmt.Sprintf("Deadline is reached, data %s", task.Body)))
 	case result := <-resultsChannel:
-		fmt.Printf("-> %s %s\n", result.id, result.data)
-		w.WriteHeader(http.StatusOK)
-		w.Write(result.data)
+		fmt.Printf("-> %s %d %s\n", result.ID, result.StatusCode, result.Body)
+		for k, v := range result.Headers {
+			if value, ok := v.(string); ok {
+				w.Header().Add(k, value)
+			}
+		}
+		w.WriteHeader(result.StatusCode)
+		w.Write([]byte(result.Body))
 	}
 	mutex.Lock()
-	delete(results, task.id)
+	delete(results, task.ID)
 	mutex.Unlock()
 	return
 }
@@ -116,13 +125,13 @@ func getTask(w http.ResponseWriter, r *http.Request) {
 	task := <-tasks
 
 	// Dummy headers required by Rust client. Replace with something meaningful
-	w.Header().Set("Lambda-Runtime-Aws-Request-Id", task.id)
-	w.Header().Set("Lambda-Runtime-Deadline-Ms", strconv.Itoa(int(task.deadline)))
+	w.Header().Set("Lambda-Runtime-Aws-Request-Id", task.ID)
+	w.Header().Set("Lambda-Runtime-Deadline-Ms", strconv.Itoa(int(task.Deadline)))
 	w.Header().Set("Lambda-Runtime-Invoked-Function-Arn", "arn:aws:lambda:us-east-1:123456789012:function:custom-runtime")
 	w.Header().Set("Lambda-Runtime-Trace-Id", "0")
 
 	w.WriteHeader(http.StatusOK)
-	w.Write(task.data)
+	w.Write([]byte(task.Body))
 	return
 }
 
@@ -154,7 +163,7 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := ioutil.ReadAll(r.Body)
+	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		fmt.Printf("! %s\n", err)
 		return
@@ -170,21 +179,39 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	result := message{
+		Body:       string(body),
+		StatusCode: 200,
+	}
 	switch kind {
 	case "response":
+		if js, ok := parseJSON(body); ok {
+			result = js
+		}
 	case "error":
-		fmt.Printf("! Error: %s\n", data)
+		result.StatusCode = 500
+		fmt.Printf("! Error: %s\n", body)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(fmt.Sprintf("Unknown endpoint: %s", kind)))
 		return
 	}
-	resultsChannel <- message{
-		id:   id,
-		data: data,
-	}
+	result.ID = id
+	resultsChannel <- result
 	w.WriteHeader(http.StatusAccepted)
 	return
+}
+
+func parseJSON(s []byte) (message, bool) {
+	var js message
+	if err := json.Unmarshal(s, &js); err != nil {
+		fmt.Println(s, err)
+		return js, false
+	}
+	if js.StatusCode == 0 {
+		return js, false
+	}
+	return js, true
 }
 
 func api() error {
