@@ -25,6 +25,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/triggermesh/aws-custom-runtime/pkg/events/apiGateway"
 )
 
 const (
@@ -37,6 +39,11 @@ type message struct {
 	id       string
 	deadline int64
 	data     []byte
+}
+
+type responseWrapper struct {
+	http.ResponseWriter
+	Body []byte
 }
 
 var (
@@ -59,6 +66,11 @@ var (
 		"AWS_LAMBDA_LOG_STREAM_NAME":      "foo-stream",
 	}
 )
+
+func (rw *responseWrapper) Write(data []byte) (int, error) {
+	rw.Body = data
+	return len(data), nil
+}
 
 func setupEnv() error {
 	environment["_HANDLER"], _ = os.LookupEnv("_HANDLER")
@@ -187,6 +199,21 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
+func mapEvent(h http.Handler) http.Handler {
+	eventType, _ := os.LookupEnv("EVENT")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rw := responseWrapper{w, []byte{}}
+		switch eventType {
+		case "API_GATEWAY":
+			apiGateway.Request(r)
+			h.ServeHTTP(&rw, r)
+			apiGateway.Response(w, rw.Body)
+		default:
+			h.ServeHTTP(w, r)
+		}
+	})
+}
+
 func api() error {
 	apiRouter := http.NewServeMux()
 	apiRouter.HandleFunc(awsEndpoint+"/init/error", initError)
@@ -220,7 +247,8 @@ func main() {
 	}
 
 	taskRouter := http.NewServeMux()
-	taskRouter.HandleFunc("/", newTask)
+	taskHandler := http.HandlerFunc(newTask)
+	taskRouter.Handle("/", mapEvent(taskHandler))
 	fmt.Println("Listening...")
 	log.Fatalln(http.ListenAndServe(":8080", taskRouter))
 }
