@@ -29,12 +29,6 @@ import (
 	"github.com/triggermesh/aws-custom-runtime/pkg/events/apiGateway"
 )
 
-const (
-	numberOfinvokers = 8    // Number of bootstrap processes
-	requestSizeLimit = 1e+7 // Request bosy size limit, 10Mb
-	functionTTL      = 3e+9 // Funtions deadline, 3 seconds
-)
-
 type message struct {
 	id       string
 	deadline int64
@@ -47,6 +41,10 @@ type responseWrapper struct {
 }
 
 var (
+	numberOfinvokers       = 8  // Number of bootstrap processes
+	requestSizeLimit int64 = 5  // Request body size limit, Mb
+	functionTTL      int64 = 10 // Funtions deadline, seconds
+
 	tasks   chan message
 	results map[string]chan message
 
@@ -85,7 +83,9 @@ func setupEnv() error {
 }
 
 func newTask(w http.ResponseWriter, r *http.Request) {
-	body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, requestSizeLimit))
+	requestSizeLimitInBytes := requestSizeLimit * 1e+6
+	functionTTLInNanoSeconds := functionTTL * 1e+9
+	body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, requestSizeLimitInBytes))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -95,7 +95,7 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UnixNano()
 	task := message{
 		id:       fmt.Sprintf("%d", now),
-		deadline: now + functionTTL,
+		deadline: now + functionTTLInNanoSeconds,
 		data:     body,
 	}
 	fmt.Printf("<- %s %s\n", task.id, task.data)
@@ -109,7 +109,7 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 	tasks <- task
 
 	select {
-	case <-time.After(time.Duration(functionTTL)):
+	case <-time.After(time.Duration(functionTTLInNanoSeconds)):
 		fmt.Printf("-> ! %s Deadline is reached\n", task.id)
 		w.WriteHeader(http.StatusGone)
 		w.Write([]byte(fmt.Sprintf("Deadline is reached, data %s", task.data)))
@@ -214,6 +214,30 @@ func mapEvent(h http.Handler) http.Handler {
 	})
 }
 
+func setLimits() {
+	if v, ok := os.LookupEnv("INVOKER_COUNT"); ok {
+		if vv, err := strconv.Atoi(v); err != nil {
+			fmt.Printf("can't set invokers limit, using default value %d\n", numberOfinvokers)
+		} else {
+			numberOfinvokers = vv
+		}
+	}
+	if v, ok := os.LookupEnv("REQUEST_SIZE_LIMIT"); ok {
+		if vv, err := strconv.Atoi(v); err != nil {
+			fmt.Printf("can't set request size limit, using default value %d\n", requestSizeLimit)
+		} else {
+			requestSizeLimit = int64(vv)
+		}
+	}
+	if v, ok := os.LookupEnv("FUNCTION_TTL"); ok {
+		if vv, err := strconv.Atoi(v); err != nil {
+			fmt.Printf("can't set function ttl, using default value %d\n", functionTTL)
+		} else {
+			functionTTL = int64(vv)
+		}
+	}
+}
+
 func api() error {
 	apiRouter := http.NewServeMux()
 	apiRouter.HandleFunc(awsEndpoint+"/init/error", initError)
@@ -227,6 +251,9 @@ func main() {
 	results = make(map[string]chan message)
 	defer close(tasks)
 
+	fmt.Println("Setting limits")
+	setLimits()
+
 	fmt.Println("Setup env")
 	if err := setupEnv(); err != nil {
 		log.Fatalln(err)
@@ -237,8 +264,8 @@ func main() {
 		log.Fatalln(api())
 	}()
 
-	fmt.Println("Starting invokers")
 	for i := 0; i < numberOfinvokers; i++ {
+		fmt.Println("Starting bootstrap", i+1)
 		go func() {
 			if err := exec.Command("sh", "-c", environment["LAMBDA_TASK_ROOT"]+"/bootstrap").Run(); err != nil {
 				log.Fatalln(err)
