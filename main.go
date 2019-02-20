@@ -30,9 +30,10 @@ import (
 )
 
 type message struct {
-	id       string
-	deadline int64
-	data     []byte
+	id         string
+	deadline   int64
+	data       []byte
+	statusCode int
 }
 
 type responseWrapper struct {
@@ -114,8 +115,8 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusGone)
 		w.Write([]byte(fmt.Sprintf("Deadline is reached, data %s", task.data)))
 	case result := <-resultsChannel:
-		fmt.Printf("-> %s %s\n", result.id, result.data)
-		w.WriteHeader(http.StatusOK)
+		fmt.Printf("-> %s %d %s\n", result.id, result.statusCode, result.data)
+		w.WriteHeader(result.statusCode)
 		w.Write(result.data)
 	}
 	mutex.Lock()
@@ -182,18 +183,21 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	statusCode := 200
+
 	switch kind {
 	case "response":
 	case "error":
-		fmt.Printf("! Error: %s\n", data)
+		statusCode = 500
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(fmt.Sprintf("Unknown endpoint: %s", kind)))
 		return
 	}
 	resultsChannel <- message{
-		id:   id,
-		data: data,
+		id:         id,
+		data:       data,
+		statusCode: statusCode,
 	}
 	w.WriteHeader(http.StatusAccepted)
 	return
