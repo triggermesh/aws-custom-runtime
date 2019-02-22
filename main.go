@@ -270,11 +270,15 @@ func main() {
 
 	for i := 0; i < numberOfinvokers; i++ {
 		fmt.Println("Starting bootstrap", i+1)
-		go func() {
-			if err := exec.Command("sh", "-c", environment["LAMBDA_TASK_ROOT"]+"/bootstrap").Run(); err != nil {
+		go func(i int) {
+			cmd := exec.Command("sh", "-c", environment["LAMBDA_TASK_ROOT"]+"/bootstrap")
+			cmd.Env = append(os.Environ(), fmt.Sprintf("BOOTSTRAP_INDEX=%d", i))
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
 				log.Fatalln(err)
 			}
-		}()
+		}(i)
 	}
 
 	taskRouter := http.NewServeMux()
