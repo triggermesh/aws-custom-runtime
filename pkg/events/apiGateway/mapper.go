@@ -40,7 +40,7 @@ func Request(r *http.Request) {
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(js))
 }
 
-func Response(w http.ResponseWriter, data []byte) (int, error) {
+func Response(w http.ResponseWriter, statusCode int, data []byte) (int, error) {
 	var js events.APIGatewayProxyResponse
 	if err := json.Unmarshal(data, &js); err != nil {
 		return 0, err
@@ -48,6 +48,11 @@ func Response(w http.ResponseWriter, data []byte) (int, error) {
 	for k, v := range js.Headers {
 		w.Header().Set(k, v)
 	}
-	w.WriteHeader(js.StatusCode)
+
+	if js.StatusCode >= 200 {
+		statusCode = js.StatusCode
+	}
+	w.WriteHeader(statusCode)
+
 	return w.Write([]byte(js.Body))
 }
