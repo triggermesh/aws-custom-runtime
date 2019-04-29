@@ -38,6 +38,7 @@ type message struct {
 
 type responseWrapper struct {
 	http.ResponseWriter
+	StatusCode int
 	Body []byte
 }
 
@@ -69,6 +70,10 @@ var (
 func (rw *responseWrapper) Write(data []byte) (int, error) {
 	rw.Body = data
 	return len(data), nil
+}
+
+func (rw *responseWrapper) WriteHeader(statusCode int) {
+	rw.StatusCode = statusCode;
 }
 
 func setupEnv() error {
@@ -206,12 +211,12 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 func mapEvent(h http.Handler) http.Handler {
 	eventType, _ := os.LookupEnv("EVENT")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rw := responseWrapper{w, []byte{}}
+		rw := responseWrapper{w, 200, []byte{}}
 		switch eventType {
 		case "API_GATEWAY":
 			apiGateway.Request(r)
 			h.ServeHTTP(&rw, r)
-			apiGateway.Response(w, rw.Body)
+			apiGateway.Response(w, rw.StatusCode, rw.Body)
 		default:
 			h.ServeHTTP(w, r)
 		}
