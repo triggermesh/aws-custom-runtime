@@ -43,7 +43,7 @@ type responseWrapper struct {
 }
 
 var (
-	numberOfinvokers       = 8  // Number of bootstrap processes
+	numberOfinvokers       = 4  // Number of bootstrap processes
 	requestSizeLimit int64 = 5  // Request body size limit, Mb
 	functionTTL      int64 = 10 // Funtions deadline, seconds
 
