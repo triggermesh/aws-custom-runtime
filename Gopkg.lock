@@ -2,14 +2,27 @@
 
 
 [[projects]]
+  digest = "1:4775daf89638182e60b52ca32dacecb030aff6f9dcecb28af389f6e8aa807ac7"
   name = "github.com/aws/aws-lambda-go"
   packages = ["events"]
+  pruneopts = ""
   revision = "527f5d301d2993af078be6d0b63372786b3fc18f"
   version = "v1.8.2"
+
+[[projects]]
+  digest = "1:0536e7642a38c1683743ce8f1f6d83d9b3fc591a6cd911762f539283faec4132"
+  name = "github.com/kelseyhightower/envconfig"
+  packages = ["."]
+  pruneopts = ""
+  revision = "0b417c4ec4a8a82eecc22a1459a504aa55163d61"
+  version = "v1.4.0"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "eec077a636305df96e459e24c60753115240ecb0e75e7ddf8853ce461e4bbc38"
+  input-imports = [
+    "github.com/aws/aws-lambda-go/events",
+    "github.com/kelseyhightower/envconfig",
+  ]
   solver-name = "gps-cdcl"
   solver-version = 1
