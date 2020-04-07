@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kelseyhightower/envconfig"
 )
 
 func TestSetupEnv(t *testing.T) {
@@ -27,6 +29,12 @@ func TestSetupEnv(t *testing.T) {
 }
 
 func TestNewTask(t *testing.T) {
+	var s *Specification
+	err := envconfig.Process("", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	payload := []byte(`{"payload": "test"}`)
 
 	tasks = make(chan message, 100)
@@ -34,7 +42,7 @@ func TestNewTask(t *testing.T) {
 	defer close(tasks)
 
 	recorder := httptest.NewRecorder()
-	handler := http.HandlerFunc(newTask)
+	handler := http.HandlerFunc(s.newTask)
 
 	req, err := http.NewRequest("POST", "/", bytes.NewBuffer(payload))
 	if err != nil {

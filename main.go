@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kelseyhightower/envconfig"
 	"github.com/triggermesh/aws-custom-runtime/pkg/events/apiGateway"
 )
 
@@ -39,13 +40,29 @@ type message struct {
 type responseWrapper struct {
 	http.ResponseWriter
 	StatusCode int
-	Body []byte
+	Body       []byte
+}
+
+// Specification is a set of env variables that can be used to configure runtime API
+type Specification struct {
+	// Number of bootstrap processes
+	NumberOfinvokers int `envconfig:"invoker_count" default:"4"`
+	// Request body size limit, Mb
+	RequestSizeLimit int64 `envconfig:"request_size_limit" default:"5"`
+	// Funtions deadline, seconds
+	FunctionTTL int64 `envconfig:"function_ttl" default:"10"`
+	// Lambda runtime API port for functions
+	InternalAPIport string `envconfig:"internal_api_port" default:"80"`
+	// Lambda API port to put function requests and get results
+	ExternalAPIport string `envconfig:"external_api_port" default:"8080"`
+	// Either return function result "as is" or consider it as API Gateway JSON
+	EventType string `envconfig:"event_type"`
 }
 
 var (
-	numberOfinvokers       = 4  // Number of bootstrap processes
-	requestSizeLimit int64 = 5  // Request body size limit, Mb
-	functionTTL      int64 = 10 // Funtions deadline, seconds
+	// numberOfinvokers = 4
+	// requestSizeLimit int64 = 5
+	// functionTTL      int64 = 10
 
 	tasks   chan message
 	results map[string]chan message
@@ -73,7 +90,7 @@ func (rw *responseWrapper) Write(data []byte) (int, error) {
 }
 
 func (rw *responseWrapper) WriteHeader(statusCode int) {
-	rw.StatusCode = statusCode;
+	rw.StatusCode = statusCode
 }
 
 func setupEnv() error {
@@ -88,9 +105,9 @@ func setupEnv() error {
 	return nil
 }
 
-func newTask(w http.ResponseWriter, r *http.Request) {
-	requestSizeLimitInBytes := requestSizeLimit * 1e+6
-	functionTTLInNanoSeconds := functionTTL * 1e+9
+func (s *Specification) newTask(w http.ResponseWriter, r *http.Request) {
+	requestSizeLimitInBytes := s.RequestSizeLimit * 1e+6
+	functionTTLInNanoSeconds := s.FunctionTTL * 1e+9
 	body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, requestSizeLimitInBytes))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -104,7 +121,7 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 		deadline: now + functionTTLInNanoSeconds,
 		data:     body,
 	}
-	fmt.Printf("<- %s %s\n", task.id, task.data)
+	log.Printf("<- %s %s\n", task.id, task.data)
 
 	resultsChannel := make(chan message)
 	mutex.Lock()
@@ -116,11 +133,11 @@ func newTask(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case <-time.After(time.Duration(functionTTLInNanoSeconds)):
-		fmt.Printf("-> ! %s Deadline is reached\n", task.id)
+		log.Printf("-> ! %s Deadline is reached\n", task.id)
 		w.WriteHeader(http.StatusGone)
 		w.Write([]byte(fmt.Sprintf("Deadline is reached, data %s", task.data)))
 	case result := <-resultsChannel:
-		fmt.Printf("-> %s %d %s\n", result.id, result.statusCode, result.data)
+		log.Printf("-> %s %d %s\n", result.id, result.statusCode, result.data)
 		w.WriteHeader(result.statusCode)
 		w.Write(result.data)
 	}
@@ -174,7 +191,7 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		fmt.Printf("! %s\n", err)
+		log.Printf("! %s\n", err)
 		return
 	}
 	defer r.Body.Close()
@@ -208,11 +225,10 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func mapEvent(h http.Handler) http.Handler {
-	eventType, _ := os.LookupEnv("EVENT")
+func (s *Specification) mapEvent(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rw := responseWrapper{w, 200, []byte{}}
-		switch eventType {
+		switch s.EventType {
 		case "API_GATEWAY":
 			apiGateway.Request(r)
 			h.ServeHTTP(&rw, r)
@@ -223,36 +239,19 @@ func mapEvent(h http.Handler) http.Handler {
 	})
 }
 
-func setLimits() {
-	if v, ok := os.LookupEnv("INVOKER_COUNT"); ok {
-		if vv, err := strconv.Atoi(v); err != nil {
-			fmt.Printf("can't set invokers limit, using default value %d\n", numberOfinvokers)
-		} else {
-			numberOfinvokers = vv
-		}
-	}
-	if v, ok := os.LookupEnv("REQUEST_SIZE_LIMIT"); ok {
-		if vv, err := strconv.Atoi(v); err != nil {
-			fmt.Printf("can't set request size limit, using default value %d\n", requestSizeLimit)
-		} else {
-			requestSizeLimit = int64(vv)
-		}
-	}
-	if v, ok := os.LookupEnv("FUNCTION_TTL"); ok {
-		if vv, err := strconv.Atoi(v); err != nil {
-			fmt.Printf("can't set function ttl, using default value %d\n", functionTTL)
-		} else {
-			functionTTL = int64(vv)
-		}
-	}
+func ping(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("pong"))
+	return
 }
 
-func api() error {
+func (s *Specification) api() error {
 	apiRouter := http.NewServeMux()
 	apiRouter.HandleFunc(awsEndpoint+"/init/error", initError)
 	apiRouter.HandleFunc(awsEndpoint+"/invocation/next", getTask)
 	apiRouter.HandleFunc(awsEndpoint+"/invocation/", responseHandler)
-	return http.ListenAndServe(":80", apiRouter)
+	apiRouter.HandleFunc("/2018-06-01/ping", ping)
+	return http.ListenAndServe(":"+s.InternalAPIport, apiRouter)
 }
 
 func main() {
@@ -260,21 +259,26 @@ func main() {
 	results = make(map[string]chan message)
 	defer close(tasks)
 
-	fmt.Println("Setting limits")
-	setLimits()
+	var spec Specification
 
-	fmt.Println("Setup env")
+	err := envconfig.Process("", &spec)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("%+v\n", spec)
+
+	log.Println("Setup app env")
 	if err := setupEnv(); err != nil {
 		log.Fatalln(err)
 	}
 
-	fmt.Println("Starting API")
+	log.Println("Starting API")
 	go func() {
-		log.Fatalln(api())
+		log.Fatalln(spec.api())
 	}()
 
-	for i := 0; i < numberOfinvokers; i++ {
-		fmt.Println("Starting bootstrap", i+1)
+	for i := 0; i < spec.NumberOfinvokers; i++ {
+		log.Println("Starting bootstrap", i+1)
 		go func(i int) {
 			cmd := exec.Command("sh", "-c", environment["LAMBDA_TASK_ROOT"]+"/bootstrap")
 			cmd.Env = append(os.Environ(), fmt.Sprintf("BOOTSTRAP_INDEX=%d", i))
@@ -287,8 +291,8 @@ func main() {
 	}
 
 	taskRouter := http.NewServeMux()
-	taskHandler := http.HandlerFunc(newTask)
-	taskRouter.Handle("/", mapEvent(taskHandler))
-	fmt.Println("Listening...")
-	log.Fatalln(http.ListenAndServe(":8080", taskRouter))
+	taskHandler := http.HandlerFunc(spec.newTask)
+	taskRouter.Handle("/", spec.mapEvent(taskHandler))
+	log.Println("Listening...")
+	log.Fatalln(http.ListenAndServe(":"+spec.ExternalAPIport, taskRouter))
 }
