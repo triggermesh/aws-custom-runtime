@@ -93,9 +93,10 @@ func (rw *responseWrapper) WriteHeader(statusCode int) {
 	rw.StatusCode = statusCode
 }
 
-func setupEnv() error {
+func (s *Specification) setupEnv() error {
 	environment["_HANDLER"], _ = os.LookupEnv("_HANDLER")
 	environment["LAMBDA_TASK_ROOT"], _ = os.LookupEnv("LAMBDA_TASK_ROOT")
+	environment["AWS_LAMBDA_RUNTIME_API"] += ":" + s.InternalAPIport
 
 	for k, v := range environment {
 		if err := os.Setenv(k, v); err != nil {
@@ -245,13 +246,23 @@ func ping(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func (s *Specification) api() error {
+func api() error {
+	internalSocket, _ := os.LookupEnv("AWS_LAMBDA_RUNTIME_API")
+	if internalSocket == "" {
+		return fmt.Errorf("AWS_LAMBDA_RUNTIME_API is not set")
+	}
+
 	apiRouter := http.NewServeMux()
 	apiRouter.HandleFunc(awsEndpoint+"/init/error", initError)
 	apiRouter.HandleFunc(awsEndpoint+"/invocation/next", getTask)
 	apiRouter.HandleFunc(awsEndpoint+"/invocation/", responseHandler)
 	apiRouter.HandleFunc("/2018-06-01/ping", ping)
-	return http.ListenAndServe(":"+s.InternalAPIport, apiRouter)
+
+	err := http.ListenAndServe(internalSocket, apiRouter)
+	if err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }
 
 func main() {
@@ -263,18 +274,20 @@ func main() {
 
 	err := envconfig.Process("", &spec)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Cannot process env variables: %v", err)
 	}
 	log.Printf("%+v\n", spec)
 
 	log.Println("Setup app env")
-	if err := setupEnv(); err != nil {
-		log.Fatalln(err)
+	if err := spec.setupEnv(); err != nil {
+		log.Fatalf("Cannot setup runime env: %v", err)
 	}
 
 	log.Println("Starting API")
 	go func() {
-		log.Fatalln(spec.api())
+		if err := api(); err != nil {
+			log.Fatalf("Runtime internal API error: %v", err)
+		}
 	}()
 
 	for i := 0; i < spec.NumberOfinvokers; i++ {
@@ -285,7 +298,7 @@ func main() {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				log.Fatalln(err)
+				log.Fatalf("Cannot start bootstrap process: %v", err)
 			}
 		}(i)
 	}
@@ -294,5 +307,8 @@ func main() {
 	taskHandler := http.HandlerFunc(spec.newTask)
 	taskRouter.Handle("/", spec.mapEvent(taskHandler))
 	log.Println("Listening...")
-	log.Fatalln(http.ListenAndServe(":"+spec.ExternalAPIport, taskRouter))
+	err = http.ListenAndServe(":"+spec.ExternalAPIport, taskRouter)
+	if err != nil && err != http.ErrServerClosed {
+		log.Fatalf("Runtime external API error: %v", err)
+	}
 }
