@@ -1,53 +1,90 @@
-version: 2
+version: 2.1
+
+orbs:
+  go: circleci/go@1
+
 jobs:
   build:
-    working_directory: /go/src/github.com/triggermesh/aws-custom-runtime
-    docker:
-      - image: circleci/golang
+    executor:
+      name: go/default
+      tag: '1.15'
+    working_directory: ~/go/src/github.com/triggermesh/aws-custom-runtime
     steps:
       - checkout
-      - restore_cache:
-          keys:
-            - v1-pkg-cache
       - run:
-          name: Build binaries
+          name: Building package
           command: |
-            CGO_ENABLED=0 go build
-      - persist_to_workspace:
-          root: /go/src/github.com/triggermesh/aws-custom-runtime
-          paths:
-            - aws-custom-runtime
-      - save_cache:
-          key: v1-pkg-cache
-          paths:
-            - "/go/pkg"
+            pwd
+            make build
+
+  test:
+    executor:
+      name: go/default
+      tag: '1.15'
+    working_directory: ~/go/src/github.com/triggermesh/aws-custom-runtime
+    steps:
+      - checkout
+      - run:
+          name: Run fmt-test
+          command: make fmt-test
+      - run:
+          name: Installing golangci-lint
+          command: make install-golangci-lint
+      # - run:
+      #     name: Run lint
+      #     command: make lint
+      - run:
+          name: Run test/cover
+          command: make cover
+          environment:
+            TEST_OUTPUT_DIR: /tmp/test-results/
+            COVER_OUTPUT_DIR: /tmp/cover-results/
+      - store_test_results:
+          path: /tmp/test-results/
+      - store_artifacts:
+          path: /tmp/cover-results/
 
   release:
-    docker:
-      - image: circleci/golang
+    executor:
+      name: go/default
+      tag: '1.15'
+    working_directory: ~/go/src/github.com/triggermesh/aws-custom-runtime
     steps:
       - checkout
-      - attach_workspace:
-          at: /tmp/artifacts
       - run:
-          name: "Publish Release on GitHub"
+          name: Building release packages
+          command: make release
+          environment:
+            DIST_DIR: /tmp/dist/
+      - run:
+          name: Installing github-release tool
+          command: go get github.com/meterup/github-release
+      - run:
+          name: Creating github release
           command: |
-            go get github.com/tcnksm/ghr
-            VERSION=$(curl -sI https://github.com/triggermesh/aws-custom-runtime/releases/latest | grep -i "Location:" | awk -F "/" '{print $NF}' | tr -d "\r")
-            ghr -t ${GITHUB_TOKEN} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -c ${CIRCLE_SHA1} -delete ${VERSION} /tmp/artifacts
+            PRE_RELEASE=${CIRCLE_TAG/${CIRCLE_TAG%-rc[0-9]*}/}
+            github-release delete -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -t ${CIRCLE_TAG} 2>/dev/null ||:
+            ./hack/release-notes.sh ${CIRCLE_TAG} | github-release release ${PRE_RELEASE:+-p} -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -t ${CIRCLE_TAG} -d -
+            for f in $(find /tmp/dist -type f); do github-release upload -u ${CIRCLE_PROJECT_USERNAME} -r ${CIRCLE_PROJECT_REPONAME} -t ${CIRCLE_TAG} -n $(basename ${f}) -f ${f} ; done
+
 workflows:
-  version: 2
-  main:
+  build-test-and-release:
     jobs:
       - build:
           filters:
             tags:
-              only: /^v\d+\.\d+\.\d+$/
+              only: /^v([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+)?$/
+      - test:
+          filters:
+            tags:
+              only: /^v([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+)?$/
       - release:
+          context: production
           requires:
             - build
+            - test
           filters:
+            tags:
+              only: /^v([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+)?$/
             branches:
               ignore: /.*/
-            tags:
-              only: /^v\d+\.\d+\.\d+$/
