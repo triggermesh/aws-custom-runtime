@@ -13,9 +13,7 @@ jobs:
       - checkout
       - run:
           name: Building package
-          command: |
-            pwd
-            make build
+          command: make build
 
   test:
     executor:
@@ -56,6 +54,7 @@ jobs:
           command: make release
           environment:
             DIST_DIR: /tmp/dist/
+            CGO_ENABLED: 0
       - run:
           name: Installing github-release tool
           command: go get github.com/meterup/github-release
