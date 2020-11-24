@@ -1,4 +1,4 @@
-package apiGateway
+package apigateway
 
 import (
 	"bytes"
@@ -11,7 +11,13 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 )
 
-func Request(r *http.Request) {
+type APIGateway struct{}
+
+func NewMapper() *APIGateway {
+	return &APIGateway{}
+}
+
+func (a *APIGateway) Request(r *http.Request) {
 	event := events.APIGatewayProxyRequest{}
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -40,7 +46,7 @@ func Request(r *http.Request) {
 	r.Body = ioutil.NopCloser(bytes.NewBuffer(js))
 }
 
-func Response(w http.ResponseWriter, statusCode int, data []byte) (int, error) {
+func (a *APIGateway) Response(w http.ResponseWriter, statusCode int, data []byte) (int, error) {
 	var js events.APIGatewayProxyResponse
 	if err := json.Unmarshal(data, &js); err != nil {
 		return 0, err
