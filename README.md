@@ -12,14 +12,14 @@ The AWS Lambdas execution [environment](https://docs.aws.amazon.com/lambda/lates
 
 This repository contains an `example` lambda function written in bash with a AWS custom runtime described in this AWS [tutorial](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-walkthrough.html). To run this function use our [`tm`](https://github.com/triggermesh/tm) client to talk to the knative API.
 
-1. Install AWS custom runtime buildtemplate:
+1. Install AWS custom runtime:
 ```
-tm deploy buildtemplate -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/buildtemplate.yaml
+tm deploy task -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/runtime.yaml
 ```
 
 2. Deploy function:
 ```
-tm deploy service lambda-bash -f https://github.com/triggermesh/aws-custom-runtime --build-template aws-custom-runtime --build-argument DIRECTORY=example --wait
+tm deploy service lambda-bash -f https://github.com/triggermesh/aws-custom-runtime --runtime aws-custom-runtime --build-argument DIRECTORY=example --wait
 ```
 
 In output you'll see URL that you can use to access `example/function.sh` function
@@ -27,7 +27,7 @@ In output you'll see URL that you can use to access `example/function.sh` functi
 
 ### AWS Lambda RUST example
 
-RUST custom runtime is also verified to be compatible with this buildtemplate. Though [official readme](https://github.com/awslabs/aws-lambda-rust-runtime) has build instructions, it is more convenient to use docker.
+RUST is also verified to be compatible with this runtime. Though [official readme](https://github.com/awslabs/aws-lambda-rust-runtime) has build instructions, it is more convenient to use docker.
 
 1. Clone repository:
 ```
@@ -41,10 +41,10 @@ docker run --rm --user "$(id -u)":"$(id -g)" -v "$PWD":/usr/src/myapp -w /usr/sr
 mv target/release/examples/basic target/release/examples/bootstrap
 ```
 
-3. Deploy buildtemplate function using [`tm`](https://github.com/triggermesh/tm) CLI:
+3. Deploy runtime using [`tm`](https://github.com/triggermesh/tm) CLI:
 ```
-tm deploy buildtemplate -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/buildtemplate.yaml
-tm deploy service lambda-rust -f target/release/examples/ --build-template aws-custom-runtime
+tm deploy runtime -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/runtime.yaml
+tm deploy service lambda-rust -f target/release/examples/ --runtime aws-custom-runtime
 ```
 
 Use your RUST AWS Lambda function on knative:
@@ -114,8 +114,8 @@ make
 
 4. Deploy with [`tm`](https://github.com/triggermesh/tm) CLI:
 ```
-tm deploy buildtemplate -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/buildtemplate.yaml
-tm deploy service lambda-cpp -f . --build-template aws-custom-runtime
+tm deploy task -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/runtime.yaml
+tm deploy service lambda-cpp -f . --runtime aws-custom-runtime
 ```
 
 C++ Lambda function is running on knative platform:
