@@ -66,8 +66,6 @@ type Specification struct {
 	InternalAPIport string `envconfig:"internal_api_port" default:"80"`
 	// Lambda API port to put function requests and get results
 	ExternalAPIport string `envconfig:"external_api_port" default:"8080"`
-	// Parent Knative Service name
-	Service string `envconfig:"k_service"`
 
 	// Apply response wrapping before sending it back to the client.
 	// Common case - AWS Lambda functions usually returns data formatted for API Gateway service.
@@ -240,7 +238,10 @@ func (s *Specification) mapEvent(h http.Handler) http.Handler {
 	case "API_GATEWAY":
 		mapper = apigateway.NewMapper()
 	case "CLOUDEVENTS":
-		mapper = cloudevents.NewMapper(s.Service)
+		mapper = cloudevents.NewMapper()
+		if err := envconfig.Process("CE", mapper); err != nil {
+			log.Fatalf("Cannot process CloudEvents wrapper env variables: %v", err)
+		}
 	default:
 		mapper = passthrough.NewMapper()
 	}
