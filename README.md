@@ -124,11 +124,58 @@ curl lambda-cpp.default.k.triggermesh.io --data '{"payload": "foobar"}'
 Hello, World!
 ```
 
+## Events wrapping
 
-### Support
+Triggermesh AWS custom runtime supports events wrapping for better interoperability of functions and data originated from or targeted at the different platforms. Currently, there are two events wrapper available besides the default "passthrough" one:
+
+- API Gateway wrapper ensures that HTTP requests are digestible by the AWS Lambda functions and decodes their responses to the simple readable format
+- CloudEvents wrapper converts function responses into [CloudEvents](https://github.com/cloudevents/spec/blob/v1.0/README.md) event objects.
+
+Events wrapper can be enabled by setting function's environment variables and may have different set of configurable parameters. Let's take a look at CloudEvens example:
+
+1. Generate sample Go function using [tm](https://github.com/triggermesh/tm) CLI
+   ```
+   tm generate go
+   ```
+
+1. Open go/serverless.yaml deployment manifest and add events wrapper env variables:
+   ```
+   ...
+   environment:
+      RESPONSE_WRAPPER: CLOUDEVENTS
+      CE_TYPE: go-klr-cloudevent
+   ...
+   ```
+1. Deploy function:
+   ```
+   tm deploy -f go --wait
+   ```
+
+After CLI report that deployment is succeeded, send a request to the function endpoint:
+
+```
+curl -d '{"Name":"Joe"}' https://go-demo-service-go-function.default.dev.munu.io
+```
+
+The result will be encoded into CloudEvents format:
+
+```
+Validation: valid
+Context Attributes,
+  specversion: 1.0
+  type: go-klr-cloudevent
+  source: go-demo-service-go-function
+  subject: klr-response
+  id: 7fa17c84-56f0-488a-b7de-e45d7fb3b7b1
+  datacontenttype: application/json
+Data (binary),
+  "Hello Joe!"
+```
+
+## Support
 
 We would love your feedback on this tool so don't hesitate to let us know what is wrong and how we could improve it, just file an [issue](https://github.com/triggermesh/aws-custom-runtime/issues/new)
 
-### Code of Conduct
+## Code of Conduct
 
 This plugin is by no means part of [CNCF](https://www.cncf.io/) but we abide by its [code of conduct](https://github.com/cncf/foundation/blob/master/code-of-conduct.md)
