@@ -8,22 +8,28 @@ import (
 	"github.com/google/uuid"
 )
 
-type CloudEvents struct {
-	Service string
+// CloudEvent is a data structure required to map KLR responses to cloudevents
+type CloudEvent struct {
+	EventType string `envconfig:"type" default:"ce.klr.triggermesh.io"`
+	Source    string `envconfig:"k_service" default:"knative-lambda-runtime"`
+	Subject   string `envconfig:"subject" default:"klr-response"`
 }
 
-func NewMapper(service string) *CloudEvents {
-	return &CloudEvents{
-		Service: service,
-	}
+// NewMapper reurns an empty instance of CloudEvent structure
+func NewMapper() *CloudEvent {
+	return &CloudEvent{}
 }
 
-func (c *CloudEvents) Request(r *http.Request) {}
+// Request method can be used to customize incoming requests before passing them
+// to the KLR function
+func (c *CloudEvent) Request(r *http.Request) {}
 
-func (c *CloudEvents) Response(w http.ResponseWriter, statusCode int, data []byte) (int, error) {
+// Response method converts generic KLR response to the Cloudevent format
+func (c *CloudEvent) Response(w http.ResponseWriter, statusCode int, data []byte) (int, error) {
 	response := cloudevents.NewEvent()
-	response.SetType("ce.klr.triggermesh.io")
-	response.SetSource(c.Service)
+	response.SetType(c.EventType)
+	response.SetSource(c.Source)
+	response.SetSubject(c.Subject)
 	response.SetID(uuid.New().String())
 	if err := response.SetData(cloudevents.ApplicationJSON, data); err != nil {
 		return 0, fmt.Errorf("failed to set event data: %w", err)
