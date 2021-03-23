@@ -74,6 +74,9 @@ type Specification struct {
 	// NOTE: Response wrapper does both encoding and decoding depending on the type. We should consider
 	// separating wrappers by their function.
 	ResponseWrapper string `envconfig:"response_wrapper"`
+
+	// Optional sink reference
+	Sink string `envconfig:"k_sink"`
 }
 
 type message struct {
@@ -144,6 +147,14 @@ func (s *Specification) newTask(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(fmt.Sprintf("Deadline is reached, data %s", task.data)))
 	case result := <-resultsChannel:
 		log.Printf("-> %s %d %s\n", result.id, result.statusCode, result.data)
+		if s.Sink != "" {
+			ww := w
+			ww.WriteHeader(result.statusCode)
+			ww.Header().Set("HOST", s.Sink)
+			ww.Write(result.data)
+
+			result.data = []byte("ok")
+		}
 		w.WriteHeader(result.statusCode)
 		w.Write(result.data)
 	}
