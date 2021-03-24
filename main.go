@@ -15,7 +15,7 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -27,11 +27,8 @@ import (
 	"sync"
 	"time"
 
+	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/kelseyhightower/envconfig"
-	"github.com/triggermesh/aws-custom-runtime/pkg/events"
-	"github.com/triggermesh/aws-custom-runtime/pkg/events/apigateway"
-	"github.com/triggermesh/aws-custom-runtime/pkg/events/cloudevents"
-	"github.com/triggermesh/aws-custom-runtime/pkg/events/passthrough"
 )
 
 var (
@@ -53,6 +50,8 @@ var (
 		"AWS_LAMBDA_LOG_GROUP_NAME":       "foo-group",
 		"AWS_LAMBDA_LOG_STREAM_NAME":      "foo-stream",
 	}
+
+	ce ceClient
 )
 
 // Specification is a set of env variables that can be used to configure runtime API
@@ -67,17 +66,20 @@ type Specification struct {
 	InternalAPIport string `envconfig:"internal_api_port" default:"80"`
 	// Lambda API port to put function requests and get results
 	ExternalAPIport string `envconfig:"external_api_port" default:"8080"`
-
-	// Apply response wrapping before sending it back to the client.
-	// Common case - AWS Lambda functions usually returns data formatted for API Gateway service.
-	// Set "RESPONSE_WRAPPER: API_GATEWAY" and receive events as if they were processed by API Gateway.
-	// Opposite scenario - return responses in CloudEvent format: "RESPONSE_WRAPPER: CLOUDEVENTS"
-	// NOTE: Response wrapper does both encoding and decoding depending on the type. We should consider
-	// separating wrappers by their function.
-	ResponseWrapper string `envconfig:"response_wrapper"`
-
 	// Optional sink reference
 	Sink string `envconfig:"k_sink"`
+}
+
+type ceClient struct {
+	env    cloudEventSpec
+	client cloudevents.Client
+}
+
+// cloudEventSpec is a data structure required to map KLR responses to cloudevents
+type cloudEventSpec struct {
+	EventType string `envconfig:"type" default:"ce.klr.triggermesh.io"`
+	Source    string `envconfig:"source" default:"knative-lambda-runtime"`
+	Subject   string `envconfig:"subject" default:"klr-response"`
 }
 
 type message struct {
@@ -85,21 +87,6 @@ type message struct {
 	deadline   int64
 	data       []byte
 	statusCode int
-}
-
-type responseWrapper struct {
-	http.ResponseWriter
-	StatusCode int
-	Body       []byte
-}
-
-func (rw *responseWrapper) Write(data []byte) (int, error) {
-	rw.Body = data
-	return len(data), nil
-}
-
-func (rw *responseWrapper) WriteHeader(statusCode int) {
-	rw.StatusCode = statusCode
 }
 
 func (s *Specification) setupEnv() error {
@@ -149,17 +136,13 @@ func (s *Specification) newTask(w http.ResponseWriter, r *http.Request) {
 	case result := <-resultsChannel:
 		log.Printf("-> %s %d %s\n", result.id, result.statusCode, result.data)
 		if s.Sink != "" {
-			resp, err := http.Post(s.Sink, "application/json", bytes.NewReader(result.data))
-			if err != nil {
-				msg := fmt.Sprintf("sink %q is not accepting the request: %s", s.Sink, err)
-				log.Printf("-> ! %s %s\n", result.id, msg)
-				result.data = []byte(msg)
+			if err := sendCE(s.Sink, result.data); err != nil {
+				log.Printf("-> ! CE %s is not sent: %d\n", result.id, result.statusCode)
 				result.statusCode = http.StatusBadGateway
-			} else if resp.StatusCode < 200 || resp.StatusCode > 299 {
-				msg := fmt.Sprintf("sink %q responding with the error: %s", s.Sink, resp.Status)
-				log.Printf("-> ! %s %s\n", result.id, msg)
-				result.data = []byte(msg)
-				result.statusCode = resp.StatusCode
+				result.data = []byte(err.Error())
+			} else {
+				result.statusCode = http.StatusAccepted
+				result.data = []byte("ok")
 			}
 		}
 		w.WriteHeader(result.statusCode)
@@ -169,6 +152,22 @@ func (s *Specification) newTask(w http.ResponseWriter, r *http.Request) {
 	delete(results, task.id)
 	mutex.Unlock()
 	return
+}
+
+func sendCE(sink string, data interface{}) error {
+	e := cloudevents.NewEvent()
+	e.SetType(ce.env.EventType)
+	e.SetSource(ce.env.Source)
+	e.SetSubject(ce.env.Subject)
+	if err := e.SetData(cloudevents.ApplicationJSON, data); err != nil {
+		return fmt.Errorf("cannot set CE data: %w", err)
+	}
+	ctx := cloudevents.ContextWithTarget(context.Background(), sink)
+	res := ce.client.Send(ctx, e)
+	if cloudevents.IsUndelivered(res) {
+		return fmt.Errorf("failed to send CE: %w", res)
+	}
+	return nil
 }
 
 func getTask(w http.ResponseWriter, r *http.Request) {
@@ -249,31 +248,6 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func (s *Specification) mapEvent(h http.Handler) http.Handler {
-	var mapper events.Mapper
-
-	switch s.ResponseWrapper {
-	case "API_GATEWAY":
-		mapper = apigateway.NewMapper()
-	case "CLOUDEVENTS":
-		mapper = cloudevents.NewMapper()
-		if err := envconfig.Process("CE", mapper); err != nil {
-			log.Fatalf("Cannot process CloudEvents wrapper env variables: %v", err)
-		}
-	default:
-		mapper = passthrough.NewMapper()
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rw := responseWrapper{
-			ResponseWriter: w,
-		}
-		mapper.Request(r)
-		h.ServeHTTP(&rw, r)
-		mapper.Response(w, rw.StatusCode, rw.Body)
-	})
-}
-
 func ping(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("pong"))
@@ -304,6 +278,25 @@ func main() {
 	if err := envconfig.Process("", &spec); err != nil {
 		log.Fatalf("Cannot process env variables: %v", err)
 	}
+
+	if spec.Sink != "" {
+		p, err := cloudevents.NewHTTP()
+		if err != nil {
+			log.Fatalf("failed to create protocol: %s", err.Error())
+		}
+
+		ce.client, err = cloudevents.NewClient(p, cloudevents.WithTimeNow(), cloudevents.WithUUIDs())
+		if err != nil {
+			log.Fatalf("failed to create CE client, %v", err)
+		}
+
+		if err := envconfig.Process("CE", &ce.env); err != nil {
+			log.Fatalf("Cannot process env variables: %v", err)
+		}
+
+		log.Printf("%+v\n", ce.env)
+	}
+
 	log.Printf("%+v\n", spec)
 
 	log.Println("Setting up runtime env")
@@ -337,7 +330,7 @@ func main() {
 
 	taskRouter := http.NewServeMux()
 	taskHandler := http.HandlerFunc(spec.newTask)
-	taskRouter.Handle("/", spec.mapEvent(taskHandler))
+	taskRouter.Handle("/", taskHandler)
 	log.Println("Listening...")
 	err := http.ListenAndServe(":"+spec.ExternalAPIport, taskRouter)
 	if err != nil && err != http.ErrServerClosed {
