@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -148,12 +149,18 @@ func (s *Specification) newTask(w http.ResponseWriter, r *http.Request) {
 	case result := <-resultsChannel:
 		log.Printf("-> %s %d %s\n", result.id, result.statusCode, result.data)
 		if s.Sink != "" {
-			ww := w
-			ww.WriteHeader(result.statusCode)
-			ww.Header().Set("HOST", s.Sink)
-			ww.Write(result.data)
-
-			result.data = []byte("ok")
+			resp, err := http.Post(s.Sink, "application/json", bytes.NewReader(result.data))
+			if err != nil {
+				msg := fmt.Sprintf("sink %q is not accepting the request: %s", s.Sink, err)
+				log.Printf("-> ! %s %s\n", result.id, msg)
+				result.data = []byte(msg)
+				result.statusCode = http.StatusBadGateway
+			} else if resp.StatusCode < 200 || resp.StatusCode > 299 {
+				msg := fmt.Sprintf("sink %q responding with the error: %s", s.Sink, resp.Status)
+				log.Printf("-> ! %s %s\n", result.id, msg)
+				result.data = []byte(msg)
+				result.statusCode = resp.StatusCode
+			}
 		}
 		w.WriteHeader(result.statusCode)
 		w.Write(result.data)
