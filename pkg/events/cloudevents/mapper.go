@@ -11,7 +11,7 @@ import (
 // CloudEvent is a data structure required to map KLR responses to cloudevents
 type CloudEvent struct {
 	EventType string `envconfig:"type" default:"ce.klr.triggermesh.io"`
-	Source    string `envconfig:"k_service" default:"knative-lambda-runtime"`
+	Source    string `envconfig:"source" default:"knative-lambda-runtime"`
 	Subject   string `envconfig:"subject" default:"klr-response"`
 }
 
