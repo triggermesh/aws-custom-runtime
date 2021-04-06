@@ -77,9 +77,9 @@ type ceClient struct {
 
 // cloudEventSpec is a data structure required to map KLR responses to cloudevents
 type cloudEventSpec struct {
-	EventType string `envconfig:"type" default:"ce.klr.triggermesh.io"`
-	Source    string `envconfig:"source" default:"knative-lambda-runtime"`
-	Subject   string `envconfig:"subject" default:"klr-response"`
+	EventType string `envconfig:"type"`
+	Source    string `envconfig:"source"`
+	Subject   string `envconfig:"subject"`
 }
 
 type message struct {
@@ -136,7 +136,13 @@ func (s *Specification) newTask(w http.ResponseWriter, r *http.Request) {
 	case result := <-resultsChannel:
 		log.Printf("-> %s %d %s\n", result.id, result.statusCode, result.data)
 		if s.Sink != "" {
-			if err := sendCE(s.Sink, result.data); err != nil {
+			event, err := newCE(result.data)
+			if err != nil {
+				log.Printf("-> ! CE %s format error: %v\n", result.id, err)
+				result.statusCode = http.StatusBadRequest
+				result.data = []byte(err.Error())
+			}
+			if err := sendCE(s.Sink, event); err != nil {
 				log.Printf("-> ! CE %s is not sent: %d\n", result.id, result.statusCode)
 				result.statusCode = http.StatusBadGateway
 				result.data = []byte(err.Error())
@@ -154,20 +160,24 @@ func (s *Specification) newTask(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func sendCE(sink string, data interface{}) error {
+func sendCE(sink string, event cloudevents.Event) error {
+	ctx := cloudevents.ContextWithTarget(context.Background(), sink)
+	res := ce.client.Send(ctx, event)
+	if cloudevents.IsUndelivered(res) {
+		return fmt.Errorf("failed to send CE: %w", res)
+	}
+	return nil
+}
+
+func newCE(data interface{}) (cloudevents.Event, error) {
 	e := cloudevents.NewEvent()
 	e.SetType(ce.env.EventType)
 	e.SetSource(ce.env.Source)
 	e.SetSubject(ce.env.Subject)
 	if err := e.SetData(cloudevents.ApplicationJSON, data); err != nil {
-		return fmt.Errorf("cannot set CE data: %w", err)
+		return cloudevents.Event{}, fmt.Errorf("cannot set CE data: %w", err)
 	}
-	ctx := cloudevents.ContextWithTarget(context.Background(), sink)
-	res := ce.client.Send(ctx, e)
-	if cloudevents.IsUndelivered(res) {
-		return fmt.Errorf("failed to send CE: %w", res)
-	}
-	return nil
+	return e, nil
 }
 
 func getTask(w http.ResponseWriter, r *http.Request) {
