@@ -1,16 +1,18 @@
-// Copyright 2018 TriggerMesh, Inc
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+Copyright 2021 Triggermesh Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package main
 
@@ -27,6 +29,8 @@ import (
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
+
+	"github.com/triggermesh/aws-custom-runtime/pkg/converter"
 	"github.com/triggermesh/aws-custom-runtime/pkg/sender"
 )
 
@@ -69,7 +73,8 @@ type Specification struct {
 }
 
 type Handler struct {
-	*sender.Handler
+	Sender    *sender.Sender
+	Converter converter.Converter
 
 	requestSizeLimit int64
 	functionTTL      int64
@@ -139,17 +144,17 @@ func (h *Handler) newTask(w http.ResponseWriter, r *http.Request) {
 	select {
 	case <-time.After(time.Duration(functionTTLInNanoSeconds)):
 		log.Printf("-> ! %s Deadline is reached\n", task.id)
-		// w.WriteHeader(http.StatusGone)
-		// w.Write([]byte(fmt.Sprintf("Deadline is reached, data %s", task.data)))
 		resp := []byte(fmt.Sprintf("Deadline is reached, data %s", task.data))
-		if err := h.Send(resp, http.StatusGone, w); err != nil {
+		if err := h.Sender.Send(resp, http.StatusGone, w); err != nil {
 			log.Printf("! %s %v\n", task.id, err)
 		}
 	case result := <-resultsChannel:
 		log.Printf("-> %s %d %s\n", result.id, result.statusCode, result.data)
-		// w.WriteHeader(result.statusCode)
-		// w.Write(result.data)
-		if err := h.Send(result.data, result.statusCode, w); err != nil {
+		body, err := h.Converter.Convert(result.data)
+		if err != nil {
+			log.Printf("! %s %v\n", result.id, err)
+		}
+		if err := h.Sender.Send(body, result.statusCode, w); err != nil {
 			log.Printf("! %s %v\n", result.id, err)
 		}
 	}
@@ -275,9 +280,16 @@ func main() {
 		log.Fatalf("Cannot setup runime env: %v", err)
 	}
 
-	// create sender
-	sender := Handler{
-		Handler:          sender.New(spec.Sink, "text/plain"),
+	// create converter
+	conv, err := converter.New(spec.ResponseFormat)
+	if err != nil {
+		log.Fatalf("Cannot create converter: %v", err)
+	}
+
+	// setup sender
+	handler := Handler{
+		Sender:           sender.New(spec.Sink, conv.ContentType()),
+		Converter:        conv,
 		requestSizeLimit: spec.RequestSizeLimit,
 		functionTTL:      spec.FunctionTTL,
 	}
@@ -311,10 +323,10 @@ func main() {
 
 	// start external API
 	taskRouter := http.NewServeMux()
-	taskHandler := http.HandlerFunc(sender.newTask)
+	taskHandler := http.HandlerFunc(handler.newTask)
 	taskRouter.Handle("/", taskHandler)
 	log.Println("Listening...")
-	err := http.ListenAndServe(":"+spec.ExternalAPIport, taskRouter)
+	err = http.ListenAndServe(":"+spec.ExternalAPIport, taskRouter)
 	if err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Runtime external API error: %v", err)
 	}
