@@ -1,16 +1,18 @@
-// Copyright 2018 TriggerMesh, Inc
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+/*
+Copyright 2021 Triggermesh Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package main
 
@@ -27,10 +29,9 @@ import (
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
-	"github.com/triggermesh/aws-custom-runtime/pkg/events"
-	"github.com/triggermesh/aws-custom-runtime/pkg/events/apigateway"
-	"github.com/triggermesh/aws-custom-runtime/pkg/events/cloudevents"
-	"github.com/triggermesh/aws-custom-runtime/pkg/events/passthrough"
+
+	"github.com/triggermesh/aws-custom-runtime/pkg/converter"
+	"github.com/triggermesh/aws-custom-runtime/pkg/sender"
 )
 
 var (
@@ -67,13 +68,16 @@ type Specification struct {
 	// Lambda API port to put function requests and get results
 	ExternalAPIport string `envconfig:"external_api_port" default:"8080"`
 
-	// Apply response wrapping before sending it back to the client.
-	// Common case - AWS Lambda functions usually returns data formatted for API Gateway service.
-	// Set "RESPONSE_WRAPPER: API_GATEWAY" and receive events as if they were processed by API Gateway.
-	// Opposite scenario - return responses in CloudEvent format: "RESPONSE_WRAPPER: CLOUDEVENTS"
-	// NOTE: Response wrapper does both encoding and decoding depending on the type. We should consider
-	// separating wrappers by their function.
-	ResponseWrapper string `envconfig:"response_wrapper"`
+	Sink           string `envconfig:"k_sink"`
+	ResponseFormat string `envconfig:"response_format"`
+}
+
+type Handler struct {
+	Sender    *sender.Sender
+	Converter converter.Converter
+
+	requestSizeLimit int64
+	functionTTL      int64
 }
 
 type message struct {
@@ -98,10 +102,10 @@ func (rw *responseWrapper) WriteHeader(statusCode int) {
 	rw.StatusCode = statusCode
 }
 
-func (s *Specification) setupEnv() error {
+func setupEnv(internalAPIport string) error {
 	environment["_HANDLER"], _ = os.LookupEnv("_HANDLER")
 	environment["LAMBDA_TASK_ROOT"], _ = os.LookupEnv("LAMBDA_TASK_ROOT")
-	environment["AWS_LAMBDA_RUNTIME_API"] += ":" + s.InternalAPIport
+	environment["AWS_LAMBDA_RUNTIME_API"] += ":" + internalAPIport
 
 	for k, v := range environment {
 		if err := os.Setenv(k, v); err != nil {
@@ -111,9 +115,9 @@ func (s *Specification) setupEnv() error {
 	return nil
 }
 
-func (s *Specification) newTask(w http.ResponseWriter, r *http.Request) {
-	requestSizeLimitInBytes := s.RequestSizeLimit * 1e+6
-	functionTTLInNanoSeconds := s.FunctionTTL * 1e+9
+func (h *Handler) newTask(w http.ResponseWriter, r *http.Request) {
+	requestSizeLimitInBytes := h.requestSizeLimit * 1e+6
+	functionTTLInNanoSeconds := h.functionTTL * 1e+9
 	body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, requestSizeLimitInBytes))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -140,12 +144,19 @@ func (s *Specification) newTask(w http.ResponseWriter, r *http.Request) {
 	select {
 	case <-time.After(time.Duration(functionTTLInNanoSeconds)):
 		log.Printf("-> ! %s Deadline is reached\n", task.id)
-		w.WriteHeader(http.StatusGone)
-		w.Write([]byte(fmt.Sprintf("Deadline is reached, data %s", task.data)))
+		resp := []byte(fmt.Sprintf("Deadline is reached, data %s", task.data))
+		if err := h.Sender.Send(resp, http.StatusGone, w); err != nil {
+			log.Printf("! %s %v\n", task.id, err)
+		}
 	case result := <-resultsChannel:
 		log.Printf("-> %s %d %s\n", result.id, result.statusCode, result.data)
-		w.WriteHeader(result.statusCode)
-		w.Write(result.data)
+		body, err := h.Converter.Convert(result.data)
+		if err != nil {
+			log.Printf("! %s %v\n", result.id, err)
+		}
+		if err := h.Sender.Send(body, result.statusCode, w); err != nil {
+			log.Printf("! %s %v\n", result.id, err)
+		}
 	}
 	mutex.Lock()
 	delete(results, task.id)
@@ -231,31 +242,6 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-func (s *Specification) mapEvent(h http.Handler) http.Handler {
-	var mapper events.Mapper
-
-	switch s.ResponseWrapper {
-	case "API_GATEWAY":
-		mapper = apigateway.NewMapper()
-	case "CLOUDEVENTS":
-		mapper = cloudevents.NewMapper()
-		if err := envconfig.Process("CE", mapper); err != nil {
-			log.Fatalf("Cannot process CloudEvents wrapper env variables: %v", err)
-		}
-	default:
-		mapper = passthrough.NewMapper()
-	}
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rw := responseWrapper{
-			ResponseWriter: w,
-		}
-		mapper.Request(r)
-		h.ServeHTTP(&rw, r)
-		mapper.Response(w, rw.StatusCode, rw.Body)
-	})
-}
-
 func ping(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("pong"))
@@ -282,6 +268,7 @@ func api() error {
 }
 
 func main() {
+	// parse env
 	var spec Specification
 	if err := envconfig.Process("", &spec); err != nil {
 		log.Fatalf("Cannot process env variables: %v", err)
@@ -289,14 +276,30 @@ func main() {
 	log.Printf("%+v\n", spec)
 
 	log.Println("Setting up runtime env")
-	if err := spec.setupEnv(); err != nil {
+	if err := setupEnv(spec.InternalAPIport); err != nil {
 		log.Fatalf("Cannot setup runime env: %v", err)
 	}
 
+	// create converter
+	conv, err := converter.New(spec.ResponseFormat)
+	if err != nil {
+		log.Fatalf("Cannot create converter: %v", err)
+	}
+
+	// setup sender
+	handler := Handler{
+		Sender:           sender.New(spec.Sink, conv.ContentType()),
+		Converter:        conv,
+		requestSizeLimit: spec.RequestSizeLimit,
+		functionTTL:      spec.FunctionTTL,
+	}
+
+	// setup channels
 	tasks = make(chan message, 100)
 	results = make(map[string]chan message)
 	defer close(tasks)
 
+	// start Lambda API
 	log.Println("Starting API")
 	go func() {
 		if err := api(); err != nil {
@@ -304,6 +307,7 @@ func main() {
 		}
 	}()
 
+	// start invokers
 	for i := 0; i < spec.NumberOfinvokers; i++ {
 		log.Println("Starting bootstrap", i+1)
 		go func(i int) {
@@ -317,11 +321,12 @@ func main() {
 		}(i)
 	}
 
+	// start external API
 	taskRouter := http.NewServeMux()
-	taskHandler := http.HandlerFunc(spec.newTask)
-	taskRouter.Handle("/", spec.mapEvent(taskHandler))
+	taskHandler := http.HandlerFunc(handler.newTask)
+	taskRouter.Handle("/", taskHandler)
 	log.Println("Listening...")
-	err := http.ListenAndServe(":"+spec.ExternalAPIport, taskRouter)
+	err = http.ListenAndServe(":"+spec.ExternalAPIport, taskRouter)
 	if err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Runtime external API error: %v", err)
 	}

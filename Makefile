@@ -18,7 +18,7 @@ GOLINT            ?= golangci-lint run
 GOTOOL            ?= go tool
 GOTEST            ?= gotestsum --junitfile $(TEST_OUTPUT_DIR)/$(PACKAGE)-unit-tests.xml --format pkgname-and-test-fails --
 
-GOPKGS             = ./pkg/events/...
+GOPKGS             = ./pkg/...
 LDFLAGS            = -extldflags=-static -w -s
 
 HAS_GOTESTSUM     := $(shell command -v gotestsum;)

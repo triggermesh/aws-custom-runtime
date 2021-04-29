@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
+	"github.com/triggermesh/aws-custom-runtime/pkg/converter"
+	"github.com/triggermesh/aws-custom-runtime/pkg/sender"
 )
 
 func TestSetupEnv(t *testing.T) {
@@ -23,7 +26,7 @@ func TestSetupEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.setupEnv(); err != nil {
+	if err := setupEnv(s.InternalAPIport); err != nil {
 		t.Errorf("Setup Env error %s\n", err)
 	}
 
@@ -41,6 +44,18 @@ func TestNewTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	conv, err := converter.New(s.ResponseFormat)
+	if err != nil {
+		log.Fatalf("Cannot create converter: %v", err)
+	}
+
+	handler := Handler{
+		Sender:           sender.New(s.Sink, conv.ContentType()),
+		Converter:        conv,
+		requestSizeLimit: s.RequestSizeLimit,
+		functionTTL:      s.FunctionTTL,
+	}
+
 	payload := []byte(`{"payload": "test"}`)
 
 	tasks = make(chan message, 100)
@@ -48,14 +63,14 @@ func TestNewTask(t *testing.T) {
 	defer close(tasks)
 
 	recorder := httptest.NewRecorder()
-	handler := http.HandlerFunc(s.newTask)
+	h := http.HandlerFunc(handler.newTask)
 
 	req, err := http.NewRequest("POST", "/", bytes.NewBuffer(payload))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	go handler.ServeHTTP(recorder, req)
+	go h.ServeHTTP(recorder, req)
 	task := <-tasks
 	results[task.id] <- task
 	time.Sleep(time.Millisecond * 100)
