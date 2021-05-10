@@ -52,6 +52,13 @@ func New() (*CloudEvent, error) {
 }
 
 func (ce *CloudEvent) Convert(data []byte) ([]byte, error) {
+	// If response format is set to CloudEvents
+	// and CE_TYPE is empty,
+	// then reply with the empty response
+	if ce.EventType == "" {
+		return nil, nil
+	}
+
 	b := ceBody{
 		ID:          uuid.NewString(),
 		Type:        ce.EventType,
