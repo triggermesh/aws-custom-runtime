@@ -26,12 +26,12 @@ import (
 )
 
 type ceBody struct {
-	ID          string `json:"id"`
-	Type        string `json:"type"`
-	Time        string `json:"time"`
-	Source      string `json:"source"`
-	Specversion string `json:"specversion"`
-	Data        string `json:"data"`
+	ID          string      `json:"id"`
+	Type        string      `json:"type"`
+	Time        string      `json:"time"`
+	Source      string      `json:"source"`
+	Specversion string      `json:"specversion"`
+	Data        interface{} `json:"data"`
 }
 
 const contentType = "application/cloudevents+json"
@@ -59,13 +59,21 @@ func (ce *CloudEvent) Convert(data []byte) ([]byte, error) {
 		return nil, nil
 	}
 
+	var body interface{}
+	body = string(data)
+
+	// try to decode function's response into JSON
+	if json.Valid(data) {
+		body = json.RawMessage(data)
+	}
+
 	b := ceBody{
 		ID:          uuid.NewString(),
 		Type:        ce.EventType,
 		Time:        time.Now().Format(time.RFC3339),
 		Source:      ce.Source,
 		Specversion: "1.0",
-		Data:        string(data),
+		Data:        body,
 	}
 	return json.Marshal(b)
 }
