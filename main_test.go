@@ -63,7 +63,7 @@ func TestNewTask(t *testing.T) {
 	defer close(tasks)
 
 	recorder := httptest.NewRecorder()
-	h := http.HandlerFunc(handler.newTask)
+	h := http.HandlerFunc(handler.serve)
 
 	req, err := http.NewRequest("POST", "/", bytes.NewBuffer(payload))
 	if err != nil {
