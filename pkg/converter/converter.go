@@ -17,12 +17,15 @@ limitations under the License.
 package converter
 
 import (
+	"net/http"
+
 	"github.com/triggermesh/aws-custom-runtime/pkg/converter/cloudevents"
 	"github.com/triggermesh/aws-custom-runtime/pkg/converter/plain"
 )
 
 type Converter interface {
-	Convert([]byte) ([]byte, error)
+	Response([]byte) ([]byte, error)
+	Request([]byte, http.Header) ([]byte, map[string]string, error)
 	ContentType() string
 }
 

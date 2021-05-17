@@ -84,22 +84,8 @@ type message struct {
 	id         string
 	deadline   int64
 	data       []byte
+	context    map[string]string
 	statusCode int
-}
-
-type responseWrapper struct {
-	http.ResponseWriter
-	StatusCode int
-	Body       []byte
-}
-
-func (rw *responseWrapper) Write(data []byte) (int, error) {
-	rw.Body = data
-	return len(data), nil
-}
-
-func (rw *responseWrapper) WriteHeader(statusCode int) {
-	rw.StatusCode = statusCode
 }
 
 func setupEnv(internalAPIport string) error {
@@ -115,21 +101,38 @@ func setupEnv(internalAPIport string) error {
 	return nil
 }
 
-func (h *Handler) newTask(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	requestSizeLimitInBytes := h.requestSizeLimit * 1e+6
-	functionTTLInNanoSeconds := h.functionTTL * 1e+9
 	body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, requestSizeLimitInBytes))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 		return
 	}
 	defer r.Body.Close()
 
+	req, context, err := h.Converter.Request(body, r.Header)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	result := enqueue(req, context, h.functionTTL*1e+9)
+	result.data, err = h.Converter.Response(result.data)
+	if err != nil {
+		result.data = []byte(fmt.Sprintf("Response conversion error: %v", err))
+	}
+	if err := h.Sender.Send(result.data, result.statusCode, w); err != nil {
+		log.Printf("! %s %s %v\n", result.id, result.data, err)
+	}
+}
+
+func enqueue(request []byte, context map[string]string, ttl int64) message {
 	now := time.Now().UnixNano()
 	task := message{
 		id:       fmt.Sprintf("%d", now),
-		deadline: now + functionTTLInNanoSeconds,
-		data:     body,
+		deadline: now + ttl,
+		data:     request,
+		context:  context,
 	}
 	log.Printf("<- %s %s\n", task.id, task.data)
 
@@ -141,27 +144,22 @@ func (h *Handler) newTask(w http.ResponseWriter, r *http.Request) {
 
 	tasks <- task
 
+	var resp message
 	select {
-	case <-time.After(time.Duration(functionTTLInNanoSeconds)):
-		log.Printf("-> ! %s Deadline is reached\n", task.id)
-		resp := []byte(fmt.Sprintf("Deadline is reached, data %s", task.data))
-		if err := h.Sender.Send(resp, http.StatusGone, w); err != nil {
-			log.Printf("! %s %v\n", task.id, err)
+	case <-time.After(time.Duration(ttl)):
+		resp = message{
+			id:         task.id,
+			data:       []byte(fmt.Sprintf("Deadline is reached, data %s", task.data)),
+			statusCode: http.StatusGone,
 		}
 	case result := <-resultsChannel:
-		log.Printf("-> %s %d %s\n", result.id, result.statusCode, result.data)
-		body, err := h.Converter.Convert(result.data)
-		if err != nil {
-			log.Printf("! %s %v\n", result.id, err)
-		}
-		if err := h.Sender.Send(body, result.statusCode, w); err != nil {
-			log.Printf("! %s %v\n", result.id, err)
-		}
+		resp = result
 	}
 	mutex.Lock()
 	delete(results, task.id)
 	mutex.Unlock()
-	return
+	log.Printf("-> %s %d %s\n", resp.id, resp.statusCode, resp.data)
+	return resp
 }
 
 func getTask(w http.ResponseWriter, r *http.Request) {
@@ -172,6 +170,9 @@ func getTask(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Lambda-Runtime-Deadline-Ms", strconv.Itoa(int(task.deadline)))
 	w.Header().Set("Lambda-Runtime-Invoked-Function-Arn", "arn:aws:lambda:us-east-1:123456789012:function:custom-runtime")
 	w.Header().Set("Lambda-Runtime-Trace-Id", "0")
+	for k, v := range task.context {
+		w.Header().Set(k, v)
+	}
 
 	w.WriteHeader(http.StatusOK)
 	w.Write(task.data)
@@ -323,8 +324,7 @@ func main() {
 
 	// start external API
 	taskRouter := http.NewServeMux()
-	taskHandler := http.HandlerFunc(handler.newTask)
-	taskRouter.Handle("/", taskHandler)
+	taskRouter.Handle("/", http.HandlerFunc(handler.serve))
 	log.Println("Listening...")
 	err = http.ListenAndServe(":"+spec.ExternalAPIport, taskRouter)
 	if err != nil && err != http.ErrServerClosed {

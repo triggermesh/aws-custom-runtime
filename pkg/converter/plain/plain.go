@@ -16,6 +16,8 @@ limitations under the License.
 
 package plain
 
+import "net/http"
+
 type Plain struct{}
 
 const contentType = "plain/text"
@@ -24,8 +26,12 @@ func New() (*Plain, error) {
 	return &Plain{}, nil
 }
 
-func (p *Plain) Convert(data []byte) ([]byte, error) {
+func (p *Plain) Response(data []byte) ([]byte, error) {
 	return data, nil
+}
+
+func (p *Plain) Request(request []byte, headers http.Header) ([]byte, map[string]string, error) {
+	return request, nil, nil
 }
 
 func (p *Plain) ContentType() string {
