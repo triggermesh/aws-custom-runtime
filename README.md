@@ -14,7 +14,7 @@ This repository contains an `example` lambda function written in bash with a AWS
 
 1. Install AWS custom runtime:
 ```
-tm deploy task -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/runtime.yaml
+tm deploy task -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/main/runtime.yaml
 ```
 
 2. Deploy function:
@@ -43,7 +43,7 @@ mv target/release/examples/basic target/release/examples/bootstrap
 
 3. Deploy runtime using [`tm`](https://github.com/triggermesh/tm) CLI:
 ```
-tm deploy runtime -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/runtime.yaml
+tm deploy runtime -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/main/runtime.yaml
 tm deploy service lambda-rust -f target/release/examples/ --runtime aws-custom-runtime
 ```
 
@@ -114,7 +114,7 @@ make
 
 4. Deploy with [`tm`](https://github.com/triggermesh/tm) CLI:
 ```
-tm deploy task -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/master/runtime.yaml
+tm deploy task -f https://raw.githubusercontent.com/triggermesh/aws-custom-runtime/main/runtime.yaml
 tm deploy service lambda-cpp -f . --runtime aws-custom-runtime
 ```
 
