@@ -30,7 +30,7 @@ import (
 
 const contentType = "application/cloudevents+json"
 
-type ceBody struct {
+type ceBinaryStructure struct {
 	ID          string      `json:"id"`
 	Type        string      `json:"type"`
 	Time        string      `json:"time"`
@@ -42,6 +42,10 @@ type ceBody struct {
 
 // CloudEvent is a data structure required to map KLR responses to cloudevents
 type CloudEvent struct {
+	// FunctionResponseMode describes what data is returned from the function:
+	// only data payload or full event in binary format
+	FunctionResponseMode string `envconfig:"function_response_mode" default:"data"`
+
 	EventType string `envconfig:"type" default:"ce.klr.triggermesh.io"`
 	Source    string `envconfig:"source" default:"knative-lambda-runtime"`
 	Subject   string `envconfig:"subject" default:"klr-response"`
@@ -56,6 +60,10 @@ func New() (*CloudEvent, error) {
 }
 
 func (ce *CloudEvent) Response(data []byte) ([]byte, error) {
+	if ce.FunctionResponseMode == "event" {
+		return ce.fillInContext(data)
+	}
+
 	// If response format is set to CloudEvents
 	// and CE_TYPE is empty,
 	// then reply with the empty response
@@ -78,7 +86,7 @@ func (ce *CloudEvent) Response(data []byte) ([]byte, error) {
 		body = string(data)
 	}
 
-	b := ceBody{
+	b := ceBinaryStructure{
 		ID:          uuid.NewString(),
 		Type:        ce.EventType,
 		Time:        time.Now().Format(time.RFC3339),
@@ -88,6 +96,26 @@ func (ce *CloudEvent) Response(data []byte) ([]byte, error) {
 		Data:        body,
 	}
 	return json.Marshal(b)
+}
+
+func (ce *CloudEvent) fillInContext(data []byte) ([]byte, error) {
+	var response ceBinaryStructure
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, fmt.Errorf("cannot unmarshal function response into binary CE: %w", err)
+	}
+
+	switch {
+	case response.ID == "":
+		response.ID = uuid.NewString()
+	case response.Type == "":
+		response.Type = ce.EventType
+	case response.Source == "":
+		response.Source = ce.Source
+	case response.Specversion == "":
+		response.Specversion = "1.0"
+	}
+
+	return json.Marshal(response)
 }
 
 func (ce *CloudEvent) Request(request []byte, headers http.Header) ([]byte, map[string]string, error) {
