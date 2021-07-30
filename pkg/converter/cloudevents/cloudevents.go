@@ -33,11 +33,11 @@ const contentType = "application/cloudevents+json"
 type ceBinaryStructure struct {
 	ID          string      `json:"id"`
 	Type        string      `json:"type"`
-	Time        string      `json:"time"`
 	Source      string      `json:"source"`
 	Specversion string      `json:"specversion"`
-	Contenttype string      `json:"datacontenttype"`
-	Data        interface{} `json:"data"`
+	Time        string      `json:"time,omitempty"`
+	Contenttype string      `json:"datacontenttype,omitempty"`
+	Data        interface{} `json:"data,omitempty"`
 }
 
 // CloudEvent is a data structure required to map KLR responses to cloudevents
@@ -46,6 +46,10 @@ type CloudEvent struct {
 	// only data payload or full event in binary format
 	FunctionResponseMode string `envconfig:"function_response_mode" default:"data"`
 
+	Overrides Overrides `envconfig:"overrides"`
+}
+
+type Overrides struct {
 	EventType string `envconfig:"type" default:"ce.klr.triggermesh.io"`
 	Source    string `envconfig:"source" default:"knative-lambda-runtime"`
 	Subject   string `envconfig:"subject" default:"klr-response"`
@@ -67,7 +71,7 @@ func (ce *CloudEvent) Response(data []byte) ([]byte, error) {
 	// If response format is set to CloudEvents
 	// and CE_TYPE is empty,
 	// then reply with the empty response
-	if ce.EventType == "" {
+	if ce.Overrides.EventType == "" {
 		return nil, nil
 	}
 
@@ -88,9 +92,9 @@ func (ce *CloudEvent) Response(data []byte) ([]byte, error) {
 
 	b := ceBinaryStructure{
 		ID:          uuid.NewString(),
-		Type:        ce.EventType,
+		Type:        ce.Overrides.EventType,
 		Time:        time.Now().Format(time.RFC3339),
-		Source:      ce.Source,
+		Source:      ce.Overrides.Source,
 		Specversion: "1.0",
 		Contenttype: contentType,
 		Data:        body,
@@ -104,14 +108,16 @@ func (ce *CloudEvent) fillInContext(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("cannot unmarshal function response into binary CE: %w", err)
 	}
 
-	switch {
-	case response.ID == "":
+	if response.ID == "" {
 		response.ID = uuid.NewString()
-	case response.Type == "":
-		response.Type = ce.EventType
-	case response.Source == "":
-		response.Source = ce.Source
-	case response.Specversion == "":
+	}
+	if response.Type == "" {
+		response.Type = ce.Overrides.EventType
+	}
+	if response.Source == "" {
+		response.Source = ce.Overrides.Source
+	}
+	if response.Specversion == "" {
 		response.Specversion = "1.0"
 	}
 
