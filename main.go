@@ -94,7 +94,7 @@ func setupEnv(internalAPIport string) error {
 	environment["AWS_LAMBDA_RUNTIME_API"] += ":" + internalAPIport
 
 	for k, v := range environment {
-		if err := os.Setenv(k, v); err != nil {
+		if err := os.Setenv(k, os.ExpandEnv(v)); err != nil {
 			return err
 		}
 	}
