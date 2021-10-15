@@ -42,8 +42,7 @@ var (
 
 	awsEndpoint = "/2018-06-01/runtime"
 	environment = map[string]string{
-		"PATH":                   "/usr/local/bin:/usr/bin/:/bin:/opt/bin",
-		"LD_LIBRARY_PATH":        "/lib64:/usr/lib64:$LAMBDA_RUNTIME_DIR:$LAMBDA_RUNTIME_DIR/lib:$LAMBDA_TASK_ROOT:$LAMBDA_TASK_ROOT/lib:/opt/lib",
+		"LD_LIBRARY_PATH":        "/lib64:/usr/lib64:$LAMBDA_RUNTIME_DIR:$LAMBDA_RUNTIME_DIR/lib:$LAMBDA_TASK_ROOT:$LAMBDA_TASK_ROOT/lib:/opt/lib:$LD_LIBRARY_PATH",
 		"AWS_LAMBDA_RUNTIME_API": "127.0.0.1",
 
 		// Some dummy values
@@ -66,7 +65,8 @@ type Specification struct {
 	// Lambda runtime API port for functions
 	InternalAPIport string `envconfig:"internal_api_port" default:"80"`
 	// Lambda API port to put function requests and get results
-	ExternalAPIport string `envconfig:"external_api_port" default:"8080"`
+	// Note that this uses the same environment variable Knative uses to communicate expected port.
+	ExternalAPIport string `envconfig:"port" default:"8080"`
 
 	Sink           string `envconfig:"k_sink"`
 	ResponseFormat string `envconfig:"response_format"`
