@@ -176,7 +176,6 @@ func getTask(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	w.Write(task.data)
-	return
 }
 
 func initError(w http.ResponseWriter, r *http.Request) {
@@ -187,14 +186,13 @@ func initError(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	log.Fatalf("Runtime initialization error: %s\n", data)
-	return
 }
 
 func parsePath(query string) (string, string, error) {
 	path := strings.TrimPrefix(query, awsEndpoint+"/invocation/")
 	request := strings.Split(path, "/")
 	if len(request) != 2 {
-		return "", "", fmt.Errorf("Incorrect URL query size")
+		return "", "", fmt.Errorf("incorrect URL query size")
 	}
 	return request[0], request[1], nil
 }
@@ -240,13 +238,11 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 		statusCode: statusCode,
 	}
 	w.WriteHeader(http.StatusAccepted)
-	return
 }
 
 func ping(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("pong"))
-	return
 }
 
 func api() error {

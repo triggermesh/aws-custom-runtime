@@ -58,12 +58,16 @@ type Overrides struct {
 func New() (*CloudEvent, error) {
 	var ce CloudEvent
 	if err := envconfig.Process("ce", &ce); err != nil {
-		return nil, fmt.Errorf("Cannot process CloudEvent env variables: %v", err)
+		return nil, fmt.Errorf("cannot process CloudEvent env variables: %v", err)
 	}
 	return &ce, nil
 }
 
 func (ce *CloudEvent) Response(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+
 	if ce.FunctionResponseMode == "event" {
 		return ce.fillInContext(data)
 	}
