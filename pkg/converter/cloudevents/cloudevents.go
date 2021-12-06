@@ -24,21 +24,12 @@ import (
 	"strings"
 	"time"
 
+	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/google/uuid"
 	"github.com/kelseyhightower/envconfig"
 )
 
 const contentType = "application/cloudevents+json"
-
-type ceBinaryStructure struct {
-	ID          string      `json:"id"`
-	Type        string      `json:"type"`
-	Source      string      `json:"source"`
-	Specversion string      `json:"specversion"`
-	Time        string      `json:"time,omitempty"`
-	Contenttype string      `json:"datacontenttype,omitempty"`
-	Data        interface{} `json:"data,omitempty"`
-}
 
 // CloudEvent is a data structure required to map KLR responses to cloudevents
 type CloudEvent struct {
@@ -94,38 +85,37 @@ func (ce *CloudEvent) Response(data []byte) ([]byte, error) {
 		body = string(data)
 	}
 
-	b := ceBinaryStructure{
-		ID:          uuid.NewString(),
-		Type:        ce.Overrides.EventType,
-		Time:        time.Now().Format(time.RFC3339),
-		Source:      ce.Overrides.Source,
-		Specversion: "1.0",
-		Contenttype: contentType,
-		Data:        body,
-	}
-	return json.Marshal(b)
+	event := cloudevents.NewEvent(cloudevents.VersionV1)
+	event.SetID(uuid.NewString())
+	event.SetType(ce.Overrides.EventType)
+	event.SetTime(time.Now())
+	event.SetSource(ce.Overrides.Source)
+	event.SetData(contentType, body)
+	return event.MarshalJSON()
 }
 
 func (ce *CloudEvent) fillInContext(data []byte) ([]byte, error) {
-	var response ceBinaryStructure
-	if err := json.Unmarshal(data, &response); err != nil {
+	var event map[string]interface{}
+	if err := json.Unmarshal(data, &event); err != nil {
 		return nil, fmt.Errorf("cannot unmarshal function response into binary CE: %w", err)
 	}
 
-	if response.ID == "" {
-		response.ID = uuid.NewString()
+	if _, set := event["id"]; !set {
+		event["id"] = uuid.NewString()
 	}
-	if response.Type == "" {
-		response.Type = ce.Overrides.EventType
+	if _, set := event["type"]; !set {
+		event["type"] = ce.Overrides.EventType
 	}
-	if response.Source == "" {
-		response.Source = ce.Overrides.Source
+	if _, set := event["source"]; !set {
+		event["source"] = ce.Overrides.Source
 	}
-	if response.Specversion == "" {
-		response.Specversion = "1.0"
+	if _, set := event["specversion"]; !set {
+		event["specversion"] = cloudevents.VersionV1
 	}
-
-	return json.Marshal(response)
+	if _, set := event["time"]; !set {
+		event["time"] = time.Now().Format(time.RFC3339)
+	}
+	return json.Marshal(event)
 }
 
 func (ce *CloudEvent) Request(request []byte, headers http.Header) ([]byte, map[string]string, error) {
