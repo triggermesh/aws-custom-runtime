@@ -16,6 +16,7 @@ import (
 
 	"github.com/kelseyhightower/envconfig"
 	"github.com/triggermesh/aws-custom-runtime/pkg/converter"
+	"github.com/triggermesh/aws-custom-runtime/pkg/metrics"
 	"github.com/triggermesh/aws-custom-runtime/pkg/sender"
 )
 
@@ -49,9 +50,16 @@ func TestNewTask(t *testing.T) {
 		log.Fatalf("Cannot create converter: %v", err)
 	}
 
+	// start metrics reporter
+	mr, err := metrics.StatsExporter()
+	if err != nil {
+		log.Fatalf("Cannot start stats exporter: %v", err)
+	}
+
 	handler := Handler{
-		Sender:           sender.New(s.Sink, conv.ContentType()),
-		Converter:        conv,
+		sender:           sender.New(s.Sink, conv.ContentType()),
+		converter:        conv,
+		reporter:         mr,
 		requestSizeLimit: s.RequestSizeLimit,
 		functionTTL:      s.FunctionTTL,
 	}
