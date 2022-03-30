@@ -29,7 +29,11 @@ import (
 	"github.com/kelseyhightower/envconfig"
 )
 
-const contentType = "application/cloudevents+json"
+// CloudEvents request constant attributes.
+const (
+	ContentType = "application/cloudevents+json"
+	ContextKey  = "Lambda-Runtime-Cloudevents-Context"
+)
 
 // CloudEvent is a data structure required to map KLR responses to cloudevents
 type CloudEvent struct {
@@ -141,7 +145,7 @@ func (ce *CloudEvent) Request(request []byte, headers http.Header) ([]byte, map[
 	}
 
 	runtimeContext := map[string]string{
-		"Lambda-Runtime-Cloudevents-Context": string(ceContext),
+		ContextKey: string(ceContext),
 	}
 
 	return body, runtimeContext, nil
@@ -170,13 +174,14 @@ func parseStructuredCE(body []byte) ([]byte, map[string]string, error) {
 func parseBinaryCE(headers http.Header) map[string]string {
 	h := make(map[string]string)
 	for k, v := range headers {
-		if strings.HasPrefix(k, "Ce-") {
-			h[strings.ToLower(k[3:])] = strings.Join(v, ",")
+		k = strings.ToLower(k)
+		if strings.HasPrefix(k, "ce-") {
+			h[k[3:]] = strings.Join(v, ",")
 		}
 	}
 	return h
 }
 
 func (ce *CloudEvent) ContentType() string {
-	return contentType
+	return ContentType
 }

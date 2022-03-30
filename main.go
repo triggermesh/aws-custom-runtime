@@ -31,6 +31,7 @@ import (
 	"github.com/kelseyhightower/envconfig"
 
 	"github.com/triggermesh/aws-custom-runtime/pkg/converter"
+	"github.com/triggermesh/aws-custom-runtime/pkg/metrics"
 	"github.com/triggermesh/aws-custom-runtime/pkg/sender"
 )
 
@@ -73,8 +74,9 @@ type Specification struct {
 }
 
 type Handler struct {
-	Sender    *sender.Sender
-	Converter converter.Converter
+	sender    *sender.Sender
+	converter converter.Converter
+	reporter  *metrics.EventProcessingStatsReporter
 
 	requestSizeLimit int64
 	functionTTL      int64
@@ -102,28 +104,41 @@ func setupEnv(internalAPIport string) error {
 }
 
 func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
+	eventTypeTag, eventSrcTag := metrics.DefaultRequestType, metrics.DefaultRequestSource
+	start := time.Now()
+	defer func() {
+		h.reporter.ReportProcessingLatency(time.Since(start), eventTypeTag, eventSrcTag)
+	}()
+
 	requestSizeLimitInBytes := h.requestSizeLimit * 1e+6
 	body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, requestSizeLimitInBytes))
 	if err != nil {
+		h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
 		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 		return
 	}
 	defer r.Body.Close()
 
-	req, context, err := h.Converter.Request(body, r.Header)
+	req, context, err := h.converter.Request(body, r.Header)
 	if err != nil {
+		h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	eventTypeTag, eventSrcTag = metrics.CETagsFromContext(context)
+
 	result := enqueue(req, context, h.functionTTL*1e+9)
-	result.data, err = h.Converter.Response(result.data)
+	result.data, err = h.converter.Response(result.data)
 	if err != nil {
 		result.data = []byte(fmt.Sprintf("Response conversion error: %v", err))
 	}
-	if err := h.Sender.Send(result.data, result.statusCode, w); err != nil {
+	if err := h.sender.Send(result.data, result.statusCode, w); err != nil {
+		h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
 		log.Printf("! %s %s %v\n", result.id, result.data, err)
+		return
 	}
+	h.reporter.ReportProcessingSuccess(eventTypeTag, eventSrcTag)
 }
 
 func enqueue(request []byte, context map[string]string, ttl int64) message {
@@ -134,7 +149,7 @@ func enqueue(request []byte, context map[string]string, ttl int64) message {
 		data:     request,
 		context:  context,
 	}
-	log.Printf("<- %s %s\n", task.id, task.data)
+	log.Printf("<- %s\n", task.id)
 
 	resultsChannel := make(chan message)
 	mutex.Lock()
@@ -158,7 +173,7 @@ func enqueue(request []byte, context map[string]string, ttl int64) message {
 	mutex.Lock()
 	delete(results, task.id)
 	mutex.Unlock()
-	log.Printf("-> %s %d %s\n", resp.id, resp.statusCode, resp.data)
+	log.Printf("-> %s %d\n", resp.id, resp.statusCode)
 	return resp
 }
 
@@ -283,10 +298,17 @@ func main() {
 		log.Fatalf("Cannot create converter: %v", err)
 	}
 
+	// start metrics reporter
+	mr, err := metrics.StatsExporter()
+	if err != nil {
+		log.Fatalf("Cannot start stats exporter: %v", err)
+	}
+
 	// setup sender
 	handler := Handler{
-		Sender:           sender.New(spec.Sink, conv.ContentType()),
-		Converter:        conv,
+		sender:           sender.New(spec.Sink, conv.ContentType()),
+		converter:        conv,
+		reporter:         mr,
 		requestSizeLimit: spec.RequestSizeLimit,
 		functionTTL:      spec.FunctionTTL,
 	}
