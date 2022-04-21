@@ -127,15 +127,16 @@ func (ce *CloudEvent) Request(request []byte, headers http.Header) ([]byte, map[
 	var body []byte
 	var err error
 
-	switch headers.Get("Content-Type") {
-	case "application/cloudevents+json":
+	contentType := headers.Get("Content-Type")
+
+	if strings.HasPrefix(contentType, "application/cloudevents+json") {
 		if body, context, err = parseStructuredCE(request); err != nil {
 			return nil, nil, fmt.Errorf("structured CloudEvent parse error: %w", err)
 		}
-	case "application/json":
+	} else if strings.HasPrefix(contentType, "application/json") {
 		body = request
 		context = parseBinaryCE(headers)
-	default:
+	} else {
 		return request, nil, nil
 	}
 
