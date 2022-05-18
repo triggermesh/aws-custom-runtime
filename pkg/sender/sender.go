@@ -71,3 +71,7 @@ func (h *Sender) reply(ctx context.Context, data []byte, statusCode int, writer 
 	_, err := writer.Write(data)
 	return err
 }
+
+func (h *Sender) Reply (ctx context.Context, data []byte, statusCode int, writer http.ResponseWriter) error {
+	return h.reply(ctx, data, statusCode, writer)
+}

@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	ctx "context"
 
 	"github.com/kelseyhightower/envconfig"
 
@@ -133,6 +134,14 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		result.data = []byte(fmt.Sprintf("Response conversion error: %v", err))
 	}
+
+	log.Println("attempt to reply immediately from noah")
+	if err := h.sender.Reply(ctx.Background(), result.data, result.statusCode, w); err != nil {
+		h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
+		log.Printf("! %s %s %v\n", result.id, result.data, err)
+		return
+	}
+
 	if err := h.sender.Send(result.data, result.statusCode, w); err != nil {
 		h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
 		log.Printf("! %s %s %v\n", result.id, result.data, err)
@@ -325,6 +334,8 @@ func main() {
 			log.Fatalf("Runtime internal API error: %v", err)
 		}
 	}()
+
+	log.Println("noah was here")
 
 	// start invokers
 	for i := 0; i < spec.NumberOfinvokers; i++ {
