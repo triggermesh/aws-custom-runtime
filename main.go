@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	ctx "context"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -27,7 +28,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	ctx "context"
 
 	"github.com/kelseyhightower/envconfig"
 
@@ -341,7 +341,7 @@ func main() {
 	for i := 0; i < spec.NumberOfinvokers; i++ {
 		log.Println("Starting bootstrap", i+1)
 		go func(i int) {
-			cmd := exec.Command("sh", "-c", environment["LAMBDA_TASK_ROOT"]+"/bootstrap")
+			cmd := exec.Command("sh", "-c", "/Users/noahkreiger/Documents/code-work/projects/badgercorp/infrastructure/aws-custom-runtime/_output/bootstrap")
 			cmd.Env = append(os.Environ(), fmt.Sprintf("BOOTSTRAP_INDEX=%d", i))
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
