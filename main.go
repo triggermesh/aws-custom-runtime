@@ -141,12 +141,13 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 		log.Printf("! %s %s %v\n", result.id, result.data, err)
 		return
 	}
+	log.Println("done replying")
 
-	if err := h.sender.Send(result.data, result.statusCode, w); err != nil {
-		h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
-		log.Printf("! %s %s %v\n", result.id, result.data, err)
-		return
-	}
+	//if err := h.sender.Send(result.data, result.statusCode, w); err != nil {
+	//	h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
+	//	log.Printf("! %s %s %v\n", result.id, result.data, err)
+	//	return
+	//}
 	h.reporter.ReportProcessingSuccess(eventTypeTag, eventSrcTag)
 }
 
