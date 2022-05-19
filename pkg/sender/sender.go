@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 )
 
@@ -69,14 +68,7 @@ func (h *Sender) request(ctx context.Context, data []byte) (*http.Response, erro
 
 func (h *Sender) reply(ctx context.Context, data []byte, statusCode int, writer http.ResponseWriter) error {
 	writer.Header().Set("Content-Type", h.contentType)
-	log.Println("initial write status code: ", statusCode)
 	writer.WriteHeader(statusCode)
-	log.Printf("data: %s", data)
 	_, err := writer.Write(data)
-	log.Println("error is: ", err)
 	return err
-}
-
-func (h *Sender) Reply (ctx context.Context, data []byte, statusCode int, writer http.ResponseWriter) error {
-	return h.reply(ctx, data, statusCode, writer)
 }
