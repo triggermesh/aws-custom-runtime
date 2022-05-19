@@ -53,16 +53,15 @@ func (h *Sender) Send(data []byte, statusCode int, writer http.ResponseWriter) e
 			writer.WriteHeader(http.StatusBadGateway)
 			return err
 		}
-		writer.WriteHeader(statusCode)
-		// response body may contain useful information,
-		// although it's not clear where we should send it at the moment
-		log.Printf("noah: body is: \n%s", body)
+
 		if body != nil {
-			log.Println("response body exists, write back")
-			_, err = writer.Write(body)
+			log.Println("response body exists, write back flow")
+			return h.reply(ctx, body, statusCode, writer)
 		}
 
-		return err
+		log.Println("respone body is nil, just return status code")
+		writer.WriteHeader(statusCode)
+		return nil
 	}
 
 	return h.reply(ctx, data, statusCode, writer)
