@@ -9,13 +9,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
 	"github.com/triggermesh/aws-custom-runtime/pkg/converter"
+	"github.com/triggermesh/aws-custom-runtime/pkg/logger"
 	"github.com/triggermesh/aws-custom-runtime/pkg/metrics"
 	"github.com/triggermesh/aws-custom-runtime/pkg/sender"
 )
@@ -60,6 +60,7 @@ func TestNewTask(t *testing.T) {
 		sender:           sender.New(s.Sink, conv.ContentType()),
 		converter:        conv,
 		reporter:         mr,
+		logger:           logger.New(),
 		requestSizeLimit: s.RequestSizeLimit,
 		functionTTL:      s.FunctionTTL,
 	}
@@ -88,12 +89,12 @@ func TestNewTask(t *testing.T) {
 	// t.Errorf("Got %d status code, expecting %d", recorder.Code, http.StatusOK)
 	// }
 	if recorder.Body.String() != string(payload) {
-		t.Errorf("Got \"%s\" body, expecting \"%s\"", recorder.Body.String(), payload)
+		t.Errorf("Got %q body, expecting %q", recorder.Body.String(), payload)
 	}
 }
 
 func TestGetTask(t *testing.T) {
-	payload := message{id: "123", deadline: 000000000000000000, data: []byte(`{"payload": "test"}`)}
+	payload := message{id: "123", deadline: time.Now(), data: []byte(`{"payload": "test"}`)}
 
 	tasks = make(chan message, 100)
 	results = make(map[string]chan message)
@@ -114,25 +115,29 @@ func TestGetTask(t *testing.T) {
 	}
 
 	id := recorder.Header().Get("Lambda-Runtime-Aws-Request-Id")
-	deadline := recorder.Header().Get("Lambda-Runtime-Deadline-Ms")
 	if id != payload.id {
-		t.Errorf("Got \"%s\" id, expecting \"%s\"", id, payload.id)
+		t.Errorf("Got %q id, expecting %q", id, payload.id)
 	}
-	if deadline != strconv.Itoa(int(payload.deadline)) {
-		t.Errorf("Got \"%s\" deadline, expecting \"%d\"", deadline, payload.deadline)
+	deadline := recorder.Header().Get("Lambda-Runtime-Deadline-Ms")
+	if deadline != payload.deadline.String() {
+		t.Errorf("Got %q deadline, expecting %q", deadline, payload.deadline)
 	}
 	if recorder.Body.String() != string(payload.data) {
-		t.Errorf("Got \"%s\" body, expecting \"%s\"", recorder.Body.String(), payload.data)
+		t.Errorf("Got %q body, expecting %q", recorder.Body.String(), payload.data)
 	}
 }
 
 func TestInitError(t *testing.T) {
+	h := Handler{
+		logger: logger.New(),
+	}
+
 	payload := []byte(`Init error`)
 
 	if os.Getenv("CRASH") == "1" {
 
 		recorder := httptest.NewRecorder()
-		handler := http.HandlerFunc(initError)
+		handler := http.HandlerFunc(h.initError)
 		req, err := http.NewRequest("POST", "/", bytes.NewBuffer(payload))
 		if err != nil {
 			t.Fatal(err)
@@ -151,7 +156,7 @@ func TestInitError(t *testing.T) {
 	expected := fmt.Sprintf("Runtime initialization error: %s\n", string(payload))
 	got := string(gotBytes)
 	if !strings.HasSuffix(got, expected) {
-		t.Errorf("Got \"%s\" exit message, expecting \"%s\"", got, expected)
+		t.Errorf("Got %q exit message, expecting %q", got, expected)
 	}
 }
 
@@ -168,15 +173,19 @@ func TestParsePath(t *testing.T) {
 	for _, v := range cases {
 		first, second, _ := parsePath(v.path)
 		if first != v.result[0] {
-			t.Errorf("Got \"%s\" value, expecting \"%s\"", first, v.result[0])
+			t.Errorf("Got %q value, expecting %q", first, v.result[0])
 		}
 		if second != v.result[1] {
-			t.Errorf("Got \"%s\" value, expecting \"%s\"", second, v.result[1])
+			t.Errorf("Got %q value, expecting %q", second, v.result[1])
 		}
 	}
 }
 
 func TestResponseHandler(t *testing.T) {
+	h := Handler{
+		logger: logger.New(),
+	}
+
 	cases := []struct {
 		path     string
 		data     string
@@ -196,7 +205,7 @@ func TestResponseHandler(t *testing.T) {
 	defer close(results["foo"])
 
 	recorder := httptest.NewRecorder()
-	handler := http.HandlerFunc(responseHandler)
+	handler := http.HandlerFunc(h.responseHandler)
 
 	for _, v := range cases {
 		req, err := http.NewRequest("POST", awsEndpoint+"/invocation/"+v.path, bytes.NewBuffer([]byte(v.data)))
@@ -206,7 +215,7 @@ func TestResponseHandler(t *testing.T) {
 		handler.ServeHTTP(recorder, req)
 
 		if recorder.Body.String() != v.response {
-			t.Errorf("Got \"%s\" response, expecting \"%s\"", recorder.Body.String(), v.response)
+			t.Errorf("Got %q response, expecting %q", recorder.Body.String(), v.response)
 		}
 	}
 }

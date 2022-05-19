@@ -19,7 +19,6 @@ package metrics
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -156,7 +155,7 @@ func (r *EventProcessingStatsReporter) ReportProcessingLatency(d time.Duration, 
 func StatsExporter() (*EventProcessingStatsReporter, error) {
 	var env env
 	if err := envconfig.Process("", &env); err != nil {
-		log.Fatalf("Cannot process metrics env variables: %v", err)
+		return nil, fmt.Errorf("cannot process metrics env variables: %w", err)
 	}
 
 	registerEventProcessingStatsView()
@@ -180,7 +179,7 @@ func StatsExporter() (*EventProcessingStatsReporter, error) {
 		metricsExporter := http.NewServeMux()
 		metricsExporter.Handle("/metrics", pe)
 		if err := http.ListenAndServe(":"+env.PrometheusPort, metricsExporter); err != nil {
-			log.Fatalf("Failed to run Prometheus scrape endpoint: %v", err)
+			panic(err)
 		}
 	}()
 
