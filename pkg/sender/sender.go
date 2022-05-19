@@ -51,6 +51,7 @@ func (h *Sender) Send(data []byte, statusCode int, writer http.ResponseWriter) e
 			return err
 		}
 
+		// if response from inner service exists, reply with it
 		if body != nil {
 			return h.reply(ctx, body, statusCode, writer)
 		}
