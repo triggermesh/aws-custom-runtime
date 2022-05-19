@@ -57,7 +57,7 @@ func (h *Sender) Send(data []byte, statusCode int, writer http.ResponseWriter) e
 		// response body may contain useful information,
 		// although it's not clear where we should send it at the moment
 		log.Printf("noah: body is: \n%s", body)
-		if body == nil {
+		if body != nil {
 			log.Println("response body exists, write back")
 			_, err = writer.Write(body)
 		}
