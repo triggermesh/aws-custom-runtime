@@ -337,6 +337,7 @@ func main() {
 	}()
 
 	log.Println("noah was here")
+	log.Println("noah: updated")
 
 	// start invokers
 	for i := 0; i < spec.NumberOfinvokers; i++ {
