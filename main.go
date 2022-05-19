@@ -297,6 +297,7 @@ func main() {
 	log.Printf("%+v\n", spec)
 
 	log.Println("Setting up runtime env")
+	log.Println("noah helped set it up")
 	if err := setupEnv(spec.InternalAPIport); err != nil {
 		log.Fatalf("Cannot setup runime env: %v", err)
 	}
