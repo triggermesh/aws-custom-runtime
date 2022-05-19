@@ -38,6 +38,8 @@ func New(target, contentType string) *Sender {
 }
 
 func (h *Sender) Send(data []byte, statusCode int, writer http.ResponseWriter) error {
+	log.Println("noah: begin send flow")
+
 	ctx := context.Background()
 
 	if h.target != "" {
@@ -54,9 +56,13 @@ func (h *Sender) Send(data []byte, statusCode int, writer http.ResponseWriter) e
 		writer.WriteHeader(statusCode)
 		// response body may contain useful information,
 		// although it's not clear where we should send it at the moment
-		// writer.Write(body)
-		_ = body
-		return nil
+		log.Printf("noah: body is: \n%s", body)
+		if body == nil {
+			log.Println("response body exists, write back")
+			_, err = writer.Write(body)
+		}
+
+		return err
 	}
 
 	return h.reply(ctx, data, statusCode, writer)
