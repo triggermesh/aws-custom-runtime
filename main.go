@@ -134,14 +134,6 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 		result.data = []byte(fmt.Sprintf("Response conversion error: %v", err))
 	}
 
-	//log.Println("attempt to reply immediately from noah")
-	//if err := h.sender.Reply(ctx.Background(), result.data, result.statusCode, w); err != nil {
-	//	h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
-	//	log.Printf("! %s %s %v\n", result.id, result.data, err)
-	//	return
-	//}
-	//log.Println("done replying")
-
 	if err := h.sender.Send(result.data, result.statusCode, w); err != nil {
 		h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
 		log.Printf("! %s %s %v\n", result.id, result.data, err)
@@ -297,7 +289,6 @@ func main() {
 	log.Printf("%+v\n", spec)
 
 	log.Println("Setting up runtime env")
-	log.Println("noah helped set it up")
 	if err := setupEnv(spec.InternalAPIport); err != nil {
 		log.Fatalf("Cannot setup runime env: %v", err)
 	}
@@ -335,9 +326,6 @@ func main() {
 			log.Fatalf("Runtime internal API error: %v", err)
 		}
 	}()
-
-	log.Println("noah was here")
-	log.Println("noah: updated")
 
 	// start invokers
 	for i := 0; i < spec.NumberOfinvokers; i++ {
