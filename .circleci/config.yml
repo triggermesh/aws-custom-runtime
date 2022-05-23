@@ -7,7 +7,7 @@ jobs:
   build:
     executor:
       name: go/default
-      tag: '1.15'
+      tag: '1.18'
     working_directory: ~/go/src/github.com/triggermesh/aws-custom-runtime
     steps:
       - checkout
@@ -18,7 +18,7 @@ jobs:
   test:
     executor:
       name: go/default
-      tag: '1.15'
+      tag: '1.18'
     working_directory: ~/go/src/github.com/triggermesh/aws-custom-runtime
     steps:
       - checkout
@@ -45,7 +45,7 @@ jobs:
   release:
     executor:
       name: go/default
-      tag: '1.15'
+      tag: '1.18'
     working_directory: ~/go/src/github.com/triggermesh/aws-custom-runtime
     steps:
       - checkout

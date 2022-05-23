@@ -19,7 +19,6 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,9 +27,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/kelseyhightower/envconfig"
+	"go.uber.org/zap"
 
 	"github.com/triggermesh/aws-custom-runtime/pkg/converter"
+	"github.com/triggermesh/aws-custom-runtime/pkg/logger"
 	"github.com/triggermesh/aws-custom-runtime/pkg/metrics"
 	"github.com/triggermesh/aws-custom-runtime/pkg/sender"
 )
@@ -62,7 +64,7 @@ type Specification struct {
 	// Request body size limit, Mb
 	RequestSizeLimit int64 `envconfig:"request_size_limit" default:"5"`
 	// Funtions deadline, seconds
-	FunctionTTL int64 `envconfig:"function_ttl" default:"10"`
+	FunctionTTL time.Duration `envconfig:"function_ttl" default:"10s"`
 	// Lambda runtime API port for functions
 	InternalAPIport string `envconfig:"internal_api_port" default:"80"`
 	// Lambda API port to put function requests and get results
@@ -77,14 +79,15 @@ type Handler struct {
 	sender    *sender.Sender
 	converter converter.Converter
 	reporter  *metrics.EventProcessingStatsReporter
+	logger    *zap.SugaredLogger
 
 	requestSizeLimit int64
-	functionTTL      int64
+	functionTTL      time.Duration
 }
 
 type message struct {
 	id         string
-	deadline   int64
+	deadline   time.Time
 	data       []byte
 	context    map[string]string
 	statusCode int
@@ -114,6 +117,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(http.MaxBytesReader(w, r.Body, requestSizeLimitInBytes))
 	if err != nil {
 		h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
+		h.logger.Error("Request exceeds allowed size limit, rejecting")
 		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -122,34 +126,37 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 	req, context, err := h.converter.Request(body, r.Header)
 	if err != nil {
 		h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
+		h.logger.Errorf("Cannot convert request: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	eventTypeTag, eventSrcTag = metrics.CETagsFromContext(context)
 
-	result := enqueue(req, context, h.functionTTL*1e+9)
+	h.logger.Debugf("Enqueuing request: %+v, %s", context, string(req))
+	result := enqueue(req, context, h.functionTTL)
+	h.logger.Debugf("Result: %+v, %s", result.context, string(result.data))
+
 	result.data, err = h.converter.Response(result.data)
 	if err != nil {
 		result.data = []byte(fmt.Sprintf("Response conversion error: %v", err))
+		h.logger.Errorf("Cannot convert response: %v", err)
 	}
 	if err := h.sender.Send(result.data, result.statusCode, w); err != nil {
 		h.reporter.ReportProcessingError(false, eventTypeTag, eventSrcTag)
-		log.Printf("! %s %s %v\n", result.id, result.data, err)
+		h.logger.Errorf("Cannot send response: %v", err)
 		return
 	}
 	h.reporter.ReportProcessingSuccess(eventTypeTag, eventSrcTag)
 }
 
-func enqueue(request []byte, context map[string]string, ttl int64) message {
-	now := time.Now().UnixNano()
+func enqueue(request []byte, context map[string]string, ttl time.Duration) message {
 	task := message{
-		id:       fmt.Sprintf("%d", now),
-		deadline: now + ttl,
+		id:       uuid.New().String(),
+		deadline: time.Now().Add(ttl),
 		data:     request,
 		context:  context,
 	}
-	log.Printf("<- %s\n", task.id)
 
 	resultsChannel := make(chan message)
 	mutex.Lock()
@@ -161,7 +168,7 @@ func enqueue(request []byte, context map[string]string, ttl int64) message {
 
 	var resp message
 	select {
-	case <-time.After(time.Duration(ttl)):
+	case <-time.After(ttl):
 		resp = message{
 			id:         task.id,
 			data:       []byte(fmt.Sprintf("Deadline is reached, data %s", task.data)),
@@ -173,7 +180,6 @@ func enqueue(request []byte, context map[string]string, ttl int64) message {
 	mutex.Lock()
 	delete(results, task.id)
 	mutex.Unlock()
-	log.Printf("-> %s %d\n", resp.id, resp.statusCode)
 	return resp
 }
 
@@ -182,7 +188,7 @@ func getTask(w http.ResponseWriter, r *http.Request) {
 
 	// Dummy headers required by Rust client. Replace with something meaningful
 	w.Header().Set("Lambda-Runtime-Aws-Request-Id", task.id)
-	w.Header().Set("Lambda-Runtime-Deadline-Ms", strconv.Itoa(int(task.deadline)))
+	w.Header().Set("Lambda-Runtime-Deadline-Ms", strconv.Itoa(int(task.deadline.UnixMilli())))
 	w.Header().Set("Lambda-Runtime-Invoked-Function-Arn", "arn:aws:lambda:us-east-1:123456789012:function:custom-runtime")
 	w.Header().Set("Lambda-Runtime-Trace-Id", "0")
 	for k, v := range task.context {
@@ -193,28 +199,29 @@ func getTask(w http.ResponseWriter, r *http.Request) {
 	w.Write(task.data)
 }
 
-func initError(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) initError(w http.ResponseWriter, r *http.Request) {
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		log.Fatalln(err)
+		h.logger.Fatalf("Cannot read initialization error data: %v", err)
 	}
 	defer r.Body.Close()
 
-	log.Fatalf("Runtime initialization error: %s\n", data)
+	h.logger.Fatalf("Runtime initialization error: %s", data)
 }
 
 func parsePath(query string) (string, string, error) {
 	path := strings.TrimPrefix(query, awsEndpoint+"/invocation/")
 	request := strings.Split(path, "/")
 	if len(request) != 2 {
-		return "", "", fmt.Errorf("incorrect URL query size")
+		return "", "", fmt.Errorf("incorrect URL path")
 	}
 	return request[0], request[1], nil
 }
 
-func responseHandler(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) responseHandler(w http.ResponseWriter, r *http.Request) {
 	id, kind, err := parsePath(r.URL.Path)
 	if err != nil {
+		h.logger.Errorf("Runtime response error: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte(err.Error()))
 		return
@@ -222,7 +229,9 @@ func responseHandler(w http.ResponseWriter, r *http.Request) {
 
 	data, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		log.Printf("! %s\n", err)
+		h.logger.Errorf("Cannot read response data: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(err.Error()))
 		return
 	}
 	defer r.Body.Close()
@@ -260,16 +269,16 @@ func ping(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("pong"))
 }
 
-func api() error {
+func (h *Handler) internalAPI() error {
 	internalSocket, _ := os.LookupEnv("AWS_LAMBDA_RUNTIME_API")
 	if internalSocket == "" {
 		return fmt.Errorf("AWS_LAMBDA_RUNTIME_API is not set")
 	}
 
 	apiRouter := http.NewServeMux()
-	apiRouter.HandleFunc(awsEndpoint+"/init/error", initError)
+	apiRouter.HandleFunc(awsEndpoint+"/init/error", h.initError)
 	apiRouter.HandleFunc(awsEndpoint+"/invocation/next", getTask)
-	apiRouter.HandleFunc(awsEndpoint+"/invocation/", responseHandler)
+	apiRouter.HandleFunc(awsEndpoint+"/invocation/", h.responseHandler)
 	apiRouter.HandleFunc("/2018-06-01/ping", ping)
 
 	err := http.ListenAndServe(internalSocket, apiRouter)
@@ -280,28 +289,29 @@ func api() error {
 }
 
 func main() {
+	logger := logger.New()
+
 	// parse env
 	var spec Specification
 	if err := envconfig.Process("", &spec); err != nil {
-		log.Fatalf("Cannot process env variables: %v", err)
+		logger.Fatalf("Cannot process env variables: %v", err)
 	}
-	log.Printf("%+v\n", spec)
-
-	log.Println("Setting up runtime env")
+	logger.Debugf("Runtime specification: %+v", spec)
+	logger.Debug("Setting up runtime env")
 	if err := setupEnv(spec.InternalAPIport); err != nil {
-		log.Fatalf("Cannot setup runime env: %v", err)
+		logger.Fatalf("Cannot setup runime env: %v", err)
 	}
 
 	// create converter
 	conv, err := converter.New(spec.ResponseFormat)
 	if err != nil {
-		log.Fatalf("Cannot create converter: %v", err)
+		logger.Fatalf("Cannot create converter: %v", err)
 	}
 
 	// start metrics reporter
 	mr, err := metrics.StatsExporter()
 	if err != nil {
-		log.Fatalf("Cannot start stats exporter: %v", err)
+		logger.Fatalf("Cannot start stats exporter: %v", err)
 	}
 
 	// setup sender
@@ -309,6 +319,7 @@ func main() {
 		sender:           sender.New(spec.Sink, conv.ContentType()),
 		converter:        conv,
 		reporter:         mr,
+		logger:           logger,
 		requestSizeLimit: spec.RequestSizeLimit,
 		functionTTL:      spec.FunctionTTL,
 	}
@@ -319,23 +330,23 @@ func main() {
 	defer close(tasks)
 
 	// start Lambda API
-	log.Println("Starting API")
+	logger.Debug("Starting API")
 	go func() {
-		if err := api(); err != nil {
-			log.Fatalf("Runtime internal API error: %v", err)
+		if err := handler.internalAPI(); err != nil {
+			logger.Fatalf("Runtime internal API error: %v", err)
 		}
 	}()
 
 	// start invokers
 	for i := 0; i < spec.NumberOfinvokers; i++ {
-		log.Println("Starting bootstrap", i+1)
+		logger.Debug("Starting bootstrap", i+1)
 		go func(i int) {
 			cmd := exec.Command("sh", "-c", environment["LAMBDA_TASK_ROOT"]+"/bootstrap")
 			cmd.Env = append(os.Environ(), fmt.Sprintf("BOOTSTRAP_INDEX=%d", i))
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				log.Fatalf("Cannot start bootstrap process: %v", err)
+				logger.Fatalf("Cannot start bootstrap process: %v", err)
 			}
 		}(i)
 	}
@@ -343,9 +354,9 @@ func main() {
 	// start external API
 	taskRouter := http.NewServeMux()
 	taskRouter.Handle("/", http.HandlerFunc(handler.serve))
-	log.Println("Listening...")
+	logger.Info("Runtime initialized")
 	err = http.ListenAndServe(":"+spec.ExternalAPIport, taskRouter)
 	if err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Runtime external API error: %v", err)
+		logger.Fatalf("Runtime external API error: %v", err)
 	}
 }
