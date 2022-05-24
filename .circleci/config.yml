@@ -57,7 +57,7 @@ jobs:
             CGO_ENABLED: 0
       - run:
           name: Installing github-release tool
-          command: go get github.com/meterup/github-release
+          command: go install github.com/github-release/github-release
       - run:
           name: Creating github release
           command: |
