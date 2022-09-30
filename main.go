@@ -66,7 +66,7 @@ type Specification struct {
 	// Funtions deadline, seconds
 	FunctionTTL time.Duration `envconfig:"function_ttl" default:"10s"`
 	// Lambda runtime API port for functions
-	InternalAPIport string `envconfig:"internal_api_port" default:"80"`
+	InternalAPIport string `envconfig:"internal_api_port" default:"8088"`
 	// Lambda API port to put function requests and get results
 	// Note that this uses the same environment variable Knative uses to communicate expected port.
 	ExternalAPIport string `envconfig:"port" default:"8080"`
