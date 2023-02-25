@@ -13,7 +13,7 @@ require (
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/zap v1.19.1
 	golang.org/x/lint v0.0.0-20210508222113-6edffad5e616 // indirect
-	golang.org/x/sys v0.0.0-20220227234510-4e6760a101f9 // indirect
+	golang.org/x/sys v0.1.0 // indirect
 	golang.org/x/tools v0.1.8 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 )
