@@ -31,8 +31,9 @@ import (
 
 // CloudEvents request constant attributes.
 const (
-	ContentType = "application/cloudevents+json"
-	ContextKey  = "Lambda-Runtime-Cloudevents-Context"
+	ContentType      = "application/cloudevents+json"
+	CeContextKey     = "Lambda-Runtime-Cloudevents-Context"
+	ClientContextKey = "Lambda-Runtime-Client-Context"
 )
 
 // CloudEvent is a data structure required to map KLR responses to cloudevents
@@ -142,11 +143,12 @@ func (ce *CloudEvent) Request(request []byte, headers http.Header) ([]byte, map[
 
 	ceContext, err := json.Marshal(context)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot encode request context: %w", err)
+		return nil, nil, fmt.Errorf("cannot encode request event context: %w", err)
 	}
 
 	runtimeContext := map[string]string{
-		ContextKey: string(ceContext),
+		ClientContextKey: fmt.Sprintf("{\"custom\":%s}", ceContext),
+		CeContextKey:     string(ceContext),
 	}
 
 	return body, runtimeContext, nil

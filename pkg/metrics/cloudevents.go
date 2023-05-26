@@ -40,7 +40,7 @@ func CETagsFromContext(context map[string]string) (tag.Mutator, tag.Mutator) {
 	if context == nil {
 		return DefaultRequestType, DefaultRequestSource
 	}
-	ceContext, exists := context[cloudevents.ContextKey]
+	ceContext, exists := context[cloudevents.CeContextKey]
 	if !exists {
 		return DefaultRequestType, DefaultRequestSource
 	}
